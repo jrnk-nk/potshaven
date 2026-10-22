@@ -2,6 +2,7 @@ import {randomBytes, randomUUID} from 'node:crypto';
 import postgres from 'postgres';
 import {collections, validate, AppError} from './store.js';
 import {seedData} from './seed.js';
+import {databaseTlsOptions} from './database-tls.js';
 
 const SQL_FUNCTIONS = [
 `CREATE OR REPLACE FUNCTION potshaven_private.next_occurrence(p_anchor text, p_frequency text, p_today text)
@@ -214,7 +215,7 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
     try { const url = new URL(connectionString); if (!['postgres:', 'postgresql:'].includes(url.protocol) || !url.hostname) throw new Error('Invalid PostgreSQL URL'); }
     catch { throw new AppError('Use the private PostgreSQL Transaction Pooler connection string from Supabase.', 503); }
   }
-  const sql = query ? null : postgres(connectionString, {ssl: {rejectUnauthorized: true}, prepare: false, max: 1, idle_timeout: 20, connect_timeout: 10});
+  const sql = query ? null : postgres(connectionString, {ssl: databaseTlsOptions(connectionString), prepare: false, max: 1, idle_timeout: 20, connect_timeout: 10});
   const execute = query || ((text, parameters) => sql.unsafe(text, parameters));
   const run = async (text, parameters = []) => {
     try {

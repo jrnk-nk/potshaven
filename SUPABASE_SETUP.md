@@ -24,7 +24,7 @@ Image generation is optional. Add `POTSHAVEN_OPENAI_KEY` privately in Vercel and
 - The tables and functions live in `potshaven_private`, with public schema/function privileges revoked. No Supabase public/anon key or service-role key is sent to the browser.
 - Stock deductions and recurring follow-ups run atomically in the database. Session cookies remain valid across function cold starts and expire when passwords change.
 - Photos load from authenticated media routes with private caching; they are not embedded in every workspace response.
-- TLS certificate verification remains enabled. Supabase’s Transaction Pooler is used with prepared statements disabled and a small connection pool for serverless execution.
+- TLS certificate and hostname verification remain enabled. The backend includes Supabase's official production database CA certificates, so Vercel can verify the database connection without another environment variable. Supabase’s Transaction Pooler is used with prepared statements disabled and a small connection pool for serverless execution.
 
 ## If setup still does not open
 

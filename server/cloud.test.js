@@ -51,3 +51,42 @@ test('failed Supabase initialization is safely retryable without leaking a conne
   assert.equal(attempts,2);
  }finally{await server.close();}
 });
+
+test('database failures explain the corrective action without disclosing provider errors or credentials',async()=>{
+ const privateDetail=`provider details: ${env.DATABASE_URL} secret-owner=${env.APP_OWNER_PASSWORD}`;
+ const cases=[
+  ['28P01',privateDetail,'AUTHENTICATION_FAILED',/password/i],
+  ['XX000',`Tenant or user not found; ${privateDetail}`,'POOLER_PROJECT_NOT_FOUND',/pooler|project|username/i],
+  ['ENOTFOUND',privateDetail,'DATABASE_HOST_NOT_FOUND',/host|address/i],
+  ['CONNECT_TIMEOUT',privateDetail,'DATABASE_CONNECTION_TIMEOUT',/active|network|pooler/i],
+  ['SELF_SIGNED_CERT_IN_CHAIN',privateDetail,'DATABASE_TLS_ERROR',/certificate/i],
+  ['42501',privateDetail,'DATABASE_ACCESS_DENIED',/permission|access|user/i],
+  ['42601',privateDetail,'DATABASE_INITIALIZATION_FAILED',/initializ|setup/i],
+  ['unexpected-secret-code',privateDetail,'UNKNOWN',/database/i],
+ ];
+ for(const [code,message,diagnostic,action] of cases){
+  const error=Object.assign(new Error(message),{code});
+  const server=await serve(createCloudHandler({env,connect:async()=>{throw error;}}));
+  try{
+   const response=await fetch(server.url+'/api/health');
+   const text=await response.text();const data=JSON.parse(text);
+   assert.equal(response.status,503);assert.equal(data.code,'DATABASE_UNAVAILABLE');
+   assert.equal(data.diagnostic,diagnostic);assert.match(data.error,action);
+   assert.ok(!text.includes(privateDetail));assert.ok(!text.includes(env.DATABASE_URL));assert.ok(!text.includes(env.APP_OWNER_PASSWORD));
+   assert.ok(!text.includes('unexpected-secret-code'));
+  }finally{await server.close();}
+ }
+});
+
+test('database diagnostics recognize wrapped failures and tolerate circular causes',async()=>{
+ const wrapped=new Error('private outer error',{cause:Object.assign(new Error('private inner error'),{code:'ETIMEDOUT'})});
+ const circular=new Error(env.DATABASE_URL);circular.cause=circular;
+ for(const [error,diagnostic] of [[wrapped,'DATABASE_CONNECTION_TIMEOUT'],[circular,'UNKNOWN']]){
+  const server=await serve(createCloudHandler({env,connect:async()=>{throw error;}}));
+  try{
+   const response=await fetch(server.url+'/api/health');const text=await response.text();
+   assert.equal(response.status,503);assert.equal(JSON.parse(text).diagnostic,diagnostic);
+   assert.ok(!text.includes(env.DATABASE_URL));assert.ok(!text.includes('private'));
+  }finally{await server.close();}
+ }
+});

@@ -1,0 +1,28 @@
+# PotsHaven API
+
+Node 24 built-in SQLite stores data under `.data/potshaven.db`. First run creates clearly labelled demo data; subsequent starts never reseed or overwrite changes. All dates are ISO date strings. Currency defaults to GHS.
+
+For a new company database with no sample records, set `DATA_SEED=false` on its first start. This never clears an existing database. `DATA_DIR` can select a separate persistent directory, allowing the demo database to remain intact. A database first created without sample data stays free of demo records on subsequent starts even if the flag is later omitted.
+
+- `GET /api/health` is public and returns `ok`, `demoMode`, `authenticated`, `role`, `imageGenerationConfigured`, `imageModel`, `imageQuality`, `imageSize`.
+- `POST /api/auth/login {role: 'owner'|'manager', password}` sets a signed HttpOnly SameSite cookie for 12 hours. `POST /api/auth/logout` clears it. With neither password configured, local demo mode grants owner access. Session signatures are bound to the current password configuration using a keyed derivation from the retained server secret: enabling or changing either password invalidates all previously issued sessions, including demo sessions.
+- `GET /api/state` returns every collection array, the `settings` object, current `role`, `demoMode`, `imageGenerationConfigured`, `imageModel`, `imageQuality`, and `imageSize`.
+- Collections: `places`, `jobs`, `inventory`, `stockMovements`, `workers`, `vehicles`, `contracts`, `payments`, `expenses`, `purchaseRequests`, `equipment`, `issues`, `careGuides`, `designs`.
+- `GET /api/:collection`, `POST /api/:collection`, `PATCH /api/:collection/:id`, `DELETE /api/:collection/:id` are supported. POST assigns an ID and returns the record. PATCH returns the updated record. DELETE returns 204. Linked records must be unlinked first. Stock movements are immutable.
+- Maintenance jobs accept `recurrence`: `None`, `Weekly`, `Fortnightly`, `Monthly`, `Quarterly`. When PATCH transitions a recurring maintenance job to `Completed`, the same SQLite transaction creates one `Scheduled` follow-up with the next future occurrence, reset task checkboxes/photos, preserved crew/vehicle, and a shifted deadline. The completed record receives `nextJobId`; its follow-up receives `previousJobId`. Repeating completion or reopening/completing the same visit does not create duplicate follow-ups.
+- `POST /api/inventory/:id/use {quantity, jobId?, note?}` atomically deducts inventory, rejects negative balances, and returns `{item,movement}`. `POST /api/inventory/:id/restock {quantity,note?}` adds stock. Direct inventory quantity edits also write a stock adjustment movement. Usage movements carry `unitCost` and `totalCost` for project costing.
+- `PATCH /api/settings` merges `companyName`, `ownerName`, `tagline`, `email`, `phone`, `currency`, `logo`, `watermark`, `address`, `accentColor`; owner access required. Currency must be a supported uppercase ISO code; accent colours must use six-digit hex format. Logos accept PNG, JPEG or WebP data URLs or HTTPS URLs.
+- Manager access covers normal operations and purchase requests. Only owners approve/reject purchases or update reviewed requests.
+- `POST /api/designs/generate {prompt, originalImage?:dataURL, measurements?, placeId?}` calls OpenAI images, saves the image and returns a design. Requires server-only `POTSHAVEN_OPENAI_KEY` (preferred for managed proxy secrets) or `OPENAI_API_KEY`. The default model is `gpt-image-2.5-sunburst`, quality `max`, size `2560x1440`: the highest documented stable landscape size; larger sizes are experimental. Optional `POTSHAVEN_IMAGE_MODEL`, `POTSHAVEN_IMAGE_QUALITY`, `POTSHAVEN_IMAGE_SIZE` (or corresponding `OPENAI_` variables) override these settings. Older model overrides default to compatible `high` quality and `1536x1024` size; Sunburst/Flare models default to `max` and `2560x1440`. Model availability depends on the connected account. Without a key returns explicit 503. PNG/JPEG/WebP references must be under 8 MB. Generated files are served at authenticated `/media/:id.png`. Requests use inherited HTTP proxy settings with TLS verification intact and allow up to ten minutes for maximum-quality generation. The API domain `api.openai.com` must be allowed by the environment.
+
+Errors return `{error: string}` with an appropriate HTTP status. No secret values are returned. Configure `APP_OWNER_PASSWORD` and `APP_MANAGER_PASSWORD` for private shared operation. Live email/SMS/WhatsApp delivery is not part of this server: the frontend generates shareable WhatsApp messages for a manager to send.
+
+`npm start` serves the compiled application and remains usable as a local demo without passwords. Production serving does not by itself enable authentication: configure both role passwords before exposing company data to other users. `GET /api/health` and the UI explicitly report demo mode when neither password exists. Vite preserves the browser's host through its API proxy so same-origin write checks work without an extra origin allowlist.
+
+Image model and parameter defaults follow the current official OpenAI Python SDK definitions, checked during implementation:
+
+- [Image models](https://raw.githubusercontent.com/openai/openai-python/main/src/openai/types/image_model.py)
+- [Generation parameters](https://raw.githubusercontent.com/openai/openai-python/main/src/openai/types/image_generate_params.py)
+- [Edit parameters](https://raw.githubusercontent.com/openai/openai-python/main/src/openai/types/image_edit_params.py)
+
+Image transport tests inject a fake `fetchImage` response, verifying both generation and photo-edit payloads, saved images and legacy-model compatibility without making paid external API requests.

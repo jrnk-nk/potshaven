@@ -1,0 +1,26 @@
+# A persistent disk requires a paid Render service. Review costs before creating it.
+# OpenAI is optional: add POTSHAVEN_OPENAI_KEY privately after deployment.
+services:
+  - type: web
+    name: potshaven
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: false
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      - key: DATA_SEED
+        value: "false"
+      - key: APP_OWNER_PASSWORD
+        generateValue: true
+      - key: APP_MANAGER_PASSWORD
+        generateValue: true
+    disk:
+      name: potshaven-data
+      mountPath: /var/data
+      sizeGB: 1

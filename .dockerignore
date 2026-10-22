@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+.data
+.data-*
+node_modules
+dist
+tests
+test-results
+playwright-report
+*.log
+*.tsbuildinfo
+README.md
+render.yaml

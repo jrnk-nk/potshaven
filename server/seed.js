@@ -5,7 +5,7 @@ export function seedData(now = new Date()) {
     monstera: '/images/plant-monstera.svg', palm: '/images/plant-palm.svg', snake: '/images/plant-snake.svg', peace: '/images/plant-peace-lily.svg', ficus: '/images/plant-ficus.svg', croton: '/images/plant-croton.svg', fern: '/images/plant-fern.svg', aloe: '/images/plant-aloe.svg',
   };
   return {
-    settings: { companyName: 'PotsHaven', tagline: 'Beautiful spaces. Thoughtfully cared for.', email: 'hello@potshaven.com', phone: '+233 24 555 0120', currency: 'GHS', logo: '', watermark: 'PotsHaven', address: 'Accra, Ghana' },
+    settings: { companyName: 'PotsHavenGh', tagline: 'Brighten your world', email: '', phone: '', currency: 'GHS', logo: '/branding/potshaven-logo.png', watermark: 'PotsHavenGh', address: '' },
     places: [
       { id: 'place-1', name: 'The Palm Residence', client: 'Mrs. Adjei', address: '12 Palm Crescent, East Legon, Accra', phone: '+233245550101', type: 'Residence', image: image('1'), measurements: 'Front garden: 18m × 8m; terrace: 6m × 4m', notes: 'Use the side entrance. Water access beside the garage.' },
       { id: 'place-2', name: 'Labadi Beach Hotel', client: 'Ama Mensah', address: 'La Road, Labadi, Accra', phone: '+233245550102', type: 'Hotel', image: image('2'), measurements: 'Entrance beds: 30m × 3m; courtyard: 12m × 12m', notes: 'Arrive before 9am. Reception will open the service gate.' },

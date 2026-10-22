@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index?__potshaven_path=/api/:path*" },
+    { "source": "/media/:path*", "destination": "/api/index?__potshaven_path=/media/:path*" },
+    { "source": "/((?!api/|media/|assets/|images/|branding/).*)", "destination": "/index.html" }
+  ]
+}

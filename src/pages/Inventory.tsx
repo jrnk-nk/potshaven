@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode, FormEvent } from 'react';
 import { useApp, money as currency } from '../state';
+import { prepareImage } from '../images';
 
 type Entry = Record<string, any>;
 type Editor = { kind: 'item' | 'use' | 'restock' | 'history' | 'request' | 'equipment' | 'care'; item?: Entry } | null;
@@ -41,8 +42,8 @@ export function LocalDialog({ title, children, onClose, wide = false }: { title:
 export function FormField({ label, children }: { label: string; children: ReactNode }) {
   return <label className="field" style={{ display: 'grid', gap: 7, fontSize: 13, fontWeight: 600 }}>{label}{children}</label>;
 }
-export function FormButtons({ busy, onClose, label = 'Save changes' }: { busy: boolean; onClose: () => void; label?: string }) {
-  return <div className="form-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 24 }}><button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : label}</button></div>;
+export function FormButtons({ busy, onClose, label = 'Save changes', busyLabel = 'Saving…' }: { busy: boolean; onClose: () => void; label?: string; busyLabel?: string }) {
+  return <div className="form-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 24 }}><button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy}>{busy ? busyLabel : label}</button></div>;
 }
 function Tag({ children, warning = false }: { children: ReactNode; warning?: boolean }) { return <span className="badge" style={{ background: warning ? '#fff2dc' : '#edf4ec', color: warning ? '#99651e' : '#456d45' }}>{children}</span>; }
 function Blank({ text }: { text: string }) { return <div className="empty-state" style={{ padding: 52, textAlign: 'center', color: '#7d897d' }}>{text}</div>; }
@@ -75,7 +76,7 @@ export function SimplePageStyles() {
 }
 
 export function InventoryPage() {
-  const { data, refresh, create, update, notify } = useApp();
+  const { data, refresh, create, update, notify, connection } = useApp();
   const [tab, setTab] = useState('All stock');
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All categories');
@@ -83,6 +84,7 @@ export function InventoryPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [image, setImage] = useState('');
+  const [imageBusy, setImageBusy] = useState(false);
   const inventory: Entry[] = data.inventory || [];
   const requests: Entry[] = data.purchaseRequests || [];
   const equipment: Entry[] = data.equipment || [];
@@ -90,10 +92,11 @@ export function InventoryPage() {
   const lowStock = inventory.filter(item => Number(item.quantity) <= Number(item.minStock));
   const filtered = inventory.filter(item => (category === 'All categories' || item.category === category) && `${item.name} ${item.category} ${item.notes || ''}`.toLowerCase().includes(search.toLowerCase()));
   const open = (kind: NonNullable<Editor>['kind'], item?: Entry) => { setError(''); setImage(item?.image || ''); setEditor({ kind, item }); };
-  const close = () => { if (!busy) setEditor(null); };
+  const close = () => { if (!busy && !imageBusy) setEditor(null); };
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!editor) return;
+    if (!editor || busy || imageBusy) return;
+    if (connection !== 'online') { setError('Reconnect before saving changes.'); return; }
     setBusy(true); setError('');
     const values: Entry = Object.fromEntries(new FormData(event.currentTarget));
     try {
@@ -115,6 +118,14 @@ export function InventoryPage() {
     } catch (err) { setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.'); }
     finally { setBusy(false); }
   }
+  async function uploadPhoto(input: HTMLInputElement) {
+    const file = input.files?.[0];
+    if (!file) return;
+    setImageBusy(true); setError('');
+    try { setImage(await prepareImage(file)); }
+    catch (err) { setError(err instanceof Error ? err.message : 'This photo could not be prepared. Try another image.'); }
+    finally { setImageBusy(false); input.value = ''; }
+  }
   async function requestDecision(item: Entry, status: string) { try { await update('purchaseRequests', item.id, { status }); notify(`Purchase request ${status.toLowerCase()}.`); } catch (err) { notify(err instanceof Error ? err.message : 'Unable to update request.'); } }
   const item = editor?.item;
   const tabs = ['All stock', 'Purchase requests', 'Equipment', 'Plant care'];
@@ -134,12 +145,12 @@ export function InventoryPage() {
     {editor && <LocalDialog title={{ item: item ? 'Edit stock item' : 'Add stock item', use: `Use ${item?.name || 'stock'}`, restock: `Restock ${item?.name || 'item'}`, history: `${item?.name || 'Item'} · Stock history`, request: item ? 'Edit purchase request' : 'New purchase request', equipment: item ? 'Manage equipment' : 'Add equipment', care: item ? 'Edit plant care guide' : 'New plant care guide' }[editor.kind]} onClose={close} wide={editor.kind === 'history'}>
       {editor.kind === 'history' ? <><p className="muted">Every usage and replenishment is recorded here.</p><div className="table-wrap"><table className="data-table"><thead><tr><th>Date</th><th>Movement</th><th>Quantity</th><th>Job / note</th></tr></thead><tbody>{(data.stockMovements || []).filter((movement: Entry) => movement.inventoryId === item?.id || movement.itemId === item?.id).map((movement: Entry) => <tr key={movement.id}><td>{new Date(movement.createdAt || movement.date).toLocaleDateString()}</td><td>{movement.type}</td><td>{movement.quantity}</td><td>{data.jobs.find((job: Entry) => job.id === movement.jobId)?.title || 'General stock'}{movement.note && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{movement.note}</div>}</td></tr>)}</tbody></table>{!(data.stockMovements || []).some((movement: Entry) => movement.inventoryId === item?.id || movement.itemId === item?.id) && <Blank text="No movements recorded for this item yet." />}</div></> : <form onSubmit={submit}>
         {error && <p role="alert" style={{ padding: 12, color: '#a13b35', background: '#fff0ed', borderRadius: 8 }}>{error}</p>}
-        {editor.kind === 'item' && <><div style={{ display: 'flex', gap: 18, alignItems: 'center', marginBottom: 22 }}>{image ? <img src={image} alt="Stock preview" style={{ width: 80, height: 80, borderRadius: 12, objectFit: 'cover' }} /> : <div style={{ width: 80, height: 80, background: '#eef3e9', display: 'grid', placeItems: 'center', borderRadius: 12, fontSize: 30 }}>🌿</div>}<FormField label="Stock photo"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (!file) return; if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) { setError('Choose a PNG, JPEG or WebP photo.'); return; } if (file.size > 5 * 1024 * 1024) { setError('Choose a photo smaller than 5 MB.'); return; } const reader = new FileReader(); reader.onload = () => setImage(String(reader.result)); reader.readAsDataURL(file); }} /></FormField></div><div className="form-grid"><FormField label="Name"><input name="name" defaultValue={item?.name} required placeholder="e.g. Golden cane palm" /></FormField><FormField label="Category"><select name="category" defaultValue={item?.category || 'Plants'}><option>Plants</option><option>Materials</option><option>Tools</option></select></FormField><FormField label="Quantity available"><input name="quantity" type="number" min="0" step="0.01" defaultValue={item?.quantity ?? 0} required /></FormField><FormField label="Unit"><input name="unit" defaultValue={item?.unit || 'plants'} required placeholder="plants, bags, pieces…" /></FormField></div><details className="simple-details"><summary>Cost & stock alerts</summary><div className="simple-details-content"><div className="form-grid"><FormField label="Low-stock threshold"><input name="minStock" type="number" min="0" step="0.01" defaultValue={item?.minStock ?? 5} /></FormField><FormField label={`Unit cost (${data.settings.currency || 'GHS'})`}><input name="cost" type="number" min="0" step="0.01" defaultValue={item?.cost ?? 0} /></FormField></div><FormField label="Notes"><textarea name="notes" rows={3} defaultValue={item?.notes} placeholder="Size, variety, nursery location…" /></FormField></div></details></>}
+        {editor.kind === 'item' && <><div style={{ display: 'flex', gap: 18, alignItems: 'center', marginBottom: 22 }}>{image ? <img src={image} alt="Stock preview" style={{ width: 80, height: 80, borderRadius: 12, objectFit: 'cover' }} /> : <div style={{ width: 80, height: 80, background: '#eef3e9', display: 'grid', placeItems: 'center', borderRadius: 12, fontSize: 30 }}>🌿</div>}<FormField label="Stock photo"><input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || imageBusy} onChange={event => void uploadPhoto(event.currentTarget)} />{imageBusy && <span role="status" className="muted" style={{ fontSize: 12 }}>Preparing photo…</span>}</FormField></div><div className="form-grid"><FormField label="Name"><input name="name" defaultValue={item?.name} required placeholder="e.g. Golden cane palm" /></FormField><FormField label="Category"><select name="category" defaultValue={item?.category || 'Plants'}><option>Plants</option><option>Materials</option><option>Tools</option></select></FormField><FormField label="Quantity available"><input name="quantity" type="number" min="0" step="0.01" defaultValue={item?.quantity ?? 0} required /></FormField><FormField label="Unit"><input name="unit" defaultValue={item?.unit || 'plants'} required placeholder="plants, bags, pieces…" /></FormField></div><details className="simple-details"><summary>Cost & stock alerts</summary><div className="simple-details-content"><div className="form-grid"><FormField label="Low-stock threshold"><input name="minStock" type="number" min="0" step="0.01" defaultValue={item?.minStock ?? 5} /></FormField><FormField label={`Unit cost (${data.settings.currency || 'GHS'})`}><input name="cost" type="number" min="0" step="0.01" defaultValue={item?.cost ?? 0} /></FormField></div><FormField label="Notes"><textarea name="notes" rows={3} defaultValue={item?.notes} placeholder="Size, variety, nursery location…" /></FormField></div></details></>}
         {(editor.kind === 'use' || editor.kind === 'restock') && <><p className="muted">Currently available: <strong>{item?.quantity} {item?.unit}</strong></p><FormField label={editor.kind === 'use' ? 'Quantity used' : 'Quantity received'}><input name="quantity" type="number" min="0.01" max={editor.kind === 'use' ? item?.quantity : undefined} step="0.01" defaultValue={1} required /></FormField>{editor.kind === 'use' && <FormField label="Used on job"><select name="jobId" required defaultValue=""><option value="" disabled>Select a job</option>{data.jobs.map((job: Entry) => <option value={job.id} key={job.id}>{job.title}</option>)}</select></FormField>}<FormField label="Note"><textarea name="note" rows={3} placeholder={editor.kind === 'use' ? 'Where was this stock used?' : 'Supplier, delivery or receipt details…'} /></FormField><p className="muted" style={{ fontSize: 12 }}>{editor.kind === 'use' ? 'This quantity will be deducted immediately and recorded against the selected job.' : 'This quantity will be added to available stock and recorded in its history.'}</p></>}
         {editor.kind === 'request' && <><FormField label="Item or materials needed"><input name="title" defaultValue={item?.title || item?.name} required placeholder="e.g. 20 terracotta planters" /></FormField><div className="form-grid"><FormField label="Quantity"><input name="quantity" type="number" min="1" defaultValue={item?.quantity || 1} required /></FormField><FormField label={`Estimated total (${data.settings.currency || 'GHS'})`}><input name="estimatedCost" type="number" min="0" step="0.01" defaultValue={item?.estimatedCost || 0} required /></FormField></div><FormField label="Reason / supplier details"><textarea name="notes" rows={3} defaultValue={item?.notes} /></FormField>{item && <p className="muted">Status: {item.status}</p>}</>}
         {editor.kind === 'equipment' && <><FormField label="Equipment name"><input name="name" defaultValue={item?.name} required placeholder="e.g. STIHL hedge trimmer" /></FormField><div className="form-grid"><FormField label="Assigned to"><input name="assignedTo" defaultValue={item?.assignedTo || 'Store'} /></FormField><FormField label="Condition"><select name="status" defaultValue={item?.status || 'Good'}><option>Good</option><option>Available</option><option>In use</option><option>Needs service</option><option>In repair</option><option>Retired</option></select></FormField><FormField label="Last service"><input name="lastService" type="date" defaultValue={item?.lastService} /></FormField><FormField label="Next service due"><input name="nextService" type="date" defaultValue={item?.nextService || item?.nextServiceDate} required /></FormField></div><FormField label="Notes / serial number"><textarea name="notes" rows={3} defaultValue={item?.notes} /></FormField></>}
         {editor.kind === 'care' && <><FormField label="Plant name"><input name="name" defaultValue={item?.name || item?.plantName} required /></FormField>{[['watering', 'Watering'], ['pruning', 'Pruning'], ['fertilizing', 'Fertilising'], ['sunlight', 'Sunlight']].map(([key, label]) => <FormField label={label} key={key}><textarea name={key} rows={2} defaultValue={item?.[key] || (key === 'fertilizing' ? item?.feeding : key === 'sunlight' ? item?.light : '')} placeholder={`Describe ${label.toLowerCase()} requirements…`} /></FormField>)}</>}
-        <FormButtons busy={busy} onClose={close} label={editor.kind === 'use' ? 'Deduct stock' : editor.kind === 'restock' ? 'Add to stock' : 'Save changes'} />
+        <FormButtons busy={busy || imageBusy} busyLabel={imageBusy ? 'Preparing photo…' : 'Saving…'} onClose={close} label={editor.kind === 'use' ? 'Deduct stock' : editor.kind === 'restock' ? 'Add to stock' : 'Save changes'} />
       </form>}
     </LocalDialog>}
   </div>;

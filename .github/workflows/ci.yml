@@ -35,5 +35,5 @@ jobs:
         run: npm test
       - name: Check production serving and sign-in
         run: npm run test:production
-      - name: Check desktop and mobile workflows
+      - name: Check workflows, recovery and image preparation
         run: npm run test:browser

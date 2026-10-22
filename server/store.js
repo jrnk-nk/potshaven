@@ -132,7 +132,7 @@ export function createStore(filename = '.data/potshaven.db', { seed = true, now 
       }
       if (clean.accentColor && !/^#[a-fA-F0-9]{6}$/.test(clean.accentColor)) throw new AppError('Choose a valid six-digit accent colour.');
       if (clean.currency && !Intl.supportedValuesOf('currency').includes(clean.currency)) throw new AppError('Choose a supported ISO currency code, such as GHS, USD or GBP.');
-      if (clean.logo && !/^(https:\/\/|data:image\/(png|jpeg|webp);base64,)/.test(clean.logo)) throw new AppError('Upload a PNG, JPG, or WebP logo.');
+      if (clean.logo && !/^(https:\/\/|\/branding\/potshaven-logo\.png$|\/media\/uploads\/[a-f0-9]{64}\.(png|jpg|webp)$|data:image\/(png|jpeg|webp);base64,)/.test(clean.logo)) throw new AppError('Upload a PNG, JPG, or WebP logo.');
       const settings = { ...store.settings(), ...clean };
       setMeta.run('settings', JSON.stringify(settings));
       return settings;
@@ -159,6 +159,9 @@ export function createStore(filename = '.data/potshaven.db', { seed = true, now 
     store.updateSettings(initial.settings);
     setMeta.run('initialized', 'true');
   });
-  else if (!getMeta.get('initialized')) setMeta.run('initialized', 'true');
+  else if (!getMeta.get('initialized')) transaction(() => {
+    store.updateSettings(seedData(now).settings);
+    setMeta.run('initialized', 'true');
+  });
   return store;
 }

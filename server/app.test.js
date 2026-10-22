@@ -85,7 +85,8 @@ test('Vite preserved browser host and forwarded host allow same-origin writes', 
 });
 
 const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jNI0AAAAASUVORK5CYII=';
-const imageResponse = () => new Response(JSON.stringify({ data: [{ b64_json: tinyPng }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+const tinyJpeg = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/2wBDAQICAgICAgUDAwUKBwYHCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgr/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD9/KKKKAP/2Q==';
+const imageResponse = () => new Response(JSON.stringify({ data: [{ b64_json: tinyJpeg }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
 test('Sunburst generations use max quality and highest stable landscape size without external calls', async t => {
   const calls = [];
@@ -99,6 +100,8 @@ test('Sunburst generations use max quality and highest stable landscape size wit
   assert.equal(payload.quality, 'max');
   assert.equal(payload.size, '2560x1440');
   assert.equal(payload.n, 1);
+  assert.equal(payload.output_format, 'jpeg');
+  assert.equal(payload.output_compression, 95);
   assert.match(payload.prompt, /18m × 8m/);
   assert.ok(calls[0].options.signal instanceof AbortSignal);
   const design = await response.json();
@@ -106,7 +109,9 @@ test('Sunburst generations use max quality and highest stable landscape size wit
   assert.equal(store.list('designs').length, 1);
   const media = await fetch(`${base}${design.image}`);
   assert.equal(media.status, 200);
-  assert.deepEqual(Buffer.from(await media.arrayBuffer()), Buffer.from(tinyPng, 'base64'));
+  assert.match(media.headers.get('content-type'), /^image\/jpeg/);
+  assert.match(design.image, /\.jpg$/);
+  assert.deepEqual(Buffer.from(await media.arrayBuffer()), Buffer.from(tinyJpeg, 'base64'));
   const health = await (await fetch(`${base}/api/health`)).json();
   const state = await (await fetch(`${base}/api/state`)).json();
   for (const metadata of [health, state]) {
@@ -127,6 +132,8 @@ test('Sunburst photo edits send the original image with max quality and configur
   assert.equal(form.get('model'), 'gpt-image-2.5-sunburst');
   assert.equal(form.get('quality'), 'max');
   assert.equal(form.get('size'), '2560x1440');
+  assert.equal(form.get('output_format'), 'jpeg');
+  assert.equal(form.get('output_compression'), '95');
   const upload = form.get('image');
   assert.equal(upload.type, 'image/png');
   assert.deepEqual(Buffer.from(await upload.arrayBuffer()), Buffer.from(tinyPng, 'base64'));

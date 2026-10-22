@@ -76,12 +76,51 @@ try {
   let state = await api('/state');
   const stock = state.inventory.find(item => item.name === prefix + ' plant');
   assert.equal(stock.quantity, 11);
-  assert.match(stock.image, /^data:image\/png/);
+  assert.match(stock.image, /^(data:image\/png|\/media\/uploads\/)/);
+  const photoSource = `data:image/png;base64,${png}`;
+  const photoJob = await api(`/jobs/${job.id}`, { method: 'PATCH', body: JSON.stringify({ photos: [photoSource] }) });
+  const photoSettings = await api('/settings', { method: 'PATCH', body: JSON.stringify({ logo: photoSource }) });
+  assert.match(photoJob.photos[0], /^\/media\/uploads\//);
+  assert.match(photoSettings.logo, /^\/media\/uploads\//);
   await page.reload();
   await page.getByLabel('Search inventory').fill(prefix + ' plant');
   let card = page.locator('article').filter({ has: page.getByRole('heading', { name: prefix + ' plant', exact: true }) });
-  await expect(card.getByAltText(prefix + ' plant')).toHaveAttribute('src', /^data:image\/png/);
+  await expect(card.getByAltText(prefix + ' plant')).toHaveAttribute('src', /^(data:image\/png|\/media\/uploads\/)/);
+  await expect(card.getByAltText(prefix + ' plant')).toBeVisible();
+  await expect.poll(() => card.getByAltText(prefix + ' plant').evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
   console.log('PASS plant photo upload, modal focus stability, stock creation and reload persistence');
+
+  // A camera-sized original can exceed a serverless request limit. The browser
+  // must prepare it before posting, while small originals above remain lossless.
+  const cameraPNG = await page.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = 2000; canvas.height = 1200;
+    const context = canvas.getContext('2d'); const pixels = context.createImageData(canvas.width, canvas.height);
+    let seed = 127;
+    for (let i = 0; i < pixels.data.length; i += 4) {
+      for (let channel = 0; channel < 3; channel++) { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; pixels.data[i + channel] = seed >>> 24; }
+      pixels.data[i + 3] = 255;
+    }
+    context.putImageData(pixels, 0, 0); return canvas.toDataURL('image/png').split(',')[1];
+  });
+  const cameraBytes = Buffer.from(cameraPNG, 'base64');
+  assert.ok(cameraBytes.length > 4.5 * 1024 * 1024);
+  await card.getByRole('button', { name: `Edit ${prefix} plant`, exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Stock photo').setInputFiles({ name: 'large-camera-photo.png', mimeType: 'image/png', buffer: cameraBytes });
+  await expect(dialog.getByAltText('Stock preview')).toHaveAttribute('src', /^data:image\/jpeg/, { timeout: 20000 });
+  await expect(dialog.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+  const uploadRequest = page.waitForRequest(request => request.method() === 'PATCH' && new URL(request.url()).pathname === `/api/inventory/${stock.id}`);
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  assert.ok(Buffer.byteLength((await uploadRequest).postData()) < 900 * 1024, 'Prepared upload JSON should stay comfortably below serverless request limits.');
+  await expect(dialog).toHaveCount(0);
+  const preparedStock = (await api('/state')).inventory.find(item => item.id === stock.id);
+  const preparedPhoto = await fetch(apiOrigin + preparedStock.image);
+  assert.equal(preparedPhoto.status, 200);
+  assert.equal(preparedPhoto.headers.get('content-type').split(';')[0], 'image/jpeg');
+  assert.ok((await preparedPhoto.arrayBuffer()).byteLength <= 600 * 1024);
+  assert.equal(preparedStock.cost, 80);
+  assert.equal(preparedStock.minStock, 3);
+  console.log('PASS large camera photo is prepared below600KB with existing stock settings preserved');
 
   await card.getByRole('button', { name: 'Use stock', exact: true }).click();
   dialog = page.getByRole('dialog');
@@ -180,16 +219,23 @@ try {
   assert.match(message, /\[Pending \/ not confirmed\] Unchecked irrigation/);
   assert.match(message, /\[Not individually confirmed\] Legacy weeding/);
   assert.ok(!message.includes('✓ Unchecked irrigation'));
+  await page.route('**/media/uploads/**', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"Media temporarily unavailable"}' }));
+  await page.getByRole('button', { name: 'Download report', exact: false }).click();
+  await expect(page.getByRole('alert')).toContainText('could not be included');
+  await expect(page.getByRole('button', { name: 'Download report', exact: false })).toBeEnabled();
+  await page.unroute('**/media/uploads/**');
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download report', exact: false }).click()]);
   const html = readFileSync(await download.path(), 'utf8');
   assert.match(html, /MAINTENANCE SERVICE REPORT/);
   assert.match(html, /PotsHaven/);
+  assert.ok((html.match(/src="data:image\/png;base64,/g) || []).length >= 2, 'Downloaded report must embed both authenticated logo and visit photo.');
+  assert.ok(!html.includes('src="/media/'), 'Downloaded report must not depend on signed-in media URLs.');
   assert.match(html, /<strong>Completed<\/strong> — Confirmed pruning/);
   assert.match(html, /<strong>Pending \/ not confirmed<\/strong> — Unchecked irrigation/);
   assert.match(html, /<strong>Not individually confirmed<\/strong> — Legacy weeding/);
   assert.ok(!html.includes('Work completed'));
   await page.screenshot({ path: join(artifacts, 'report-desktop.png'), fullPage: true });
-  console.log('PASS branded report preview, WhatsApp and downloadable HTML preserve actual task confirmation');
+  console.log('PASS report embeds authenticated images, handles media errors, and preserves task confirmation in preview/WhatsApp/download');
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(baseURL + '/#inventory');

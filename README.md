@@ -1,77 +1,63 @@
-# PotsHaven
+# PotsHavenGh
 
-A simple workspace for a landscaping and decorating company. The owner and manager run the business here; workers receive prepared instructions through WhatsApp.
+A simple landscaping and decorating workspace for the owner and manager. Workers receive instructions through WhatsApp. The everyday menu is **Home, Schedule, Places, Inventory, and Design studio**; projects, team, finance and reports are under **More tools**.
 
-![PotsHaven home screen](docs/overview.png)
+![PotsHavenGh workspace](docs/overview.png)
 
-The everyday menu has five areas: **Home, Schedule, Places, Inventory, and Design studio**. Projects, the team, finance, and reports are under **More tools**. Phone users get the same five everyday areas in a bottom navigation bar. Optional form fields stay collapsed until needed.
+## Vercel + Supabase
 
-## Run locally
+The Vercel site needs the included serverless backend and a database. Follow [SUPABASE_SETUP.md](SUPABASE_SETUP.md) to create/connect a Supabase project, add its private `DATABASE_URL` plus owner/manager passwords in Vercel, then redeploy. `vercel.json` routes API and authenticated media requests to `api/index.js`; `dist` serves the screens. Hosted records and photos persist in a private PostgreSQL schema, with no temporary SQLite fallback.
 
-Requires **Node.js 24+** (built-in SQLite) and npm.
+The repository has no database credentials. Supabase/Vercel account settings must be connected securely by the account owner. Image generation additionally requires a private `POTSHAVEN_OPENAI_KEY`.
+
+## Local development
+
+Requires **Node.js 24** and npm:
 
 ```sh
 npm ci
 npm run dev
 ```
 
-Vite serves the app on port **5173** and proxies the API on **3001**. The first run creates an explicitly labelled demo workspace with fictional records and original botanical illustrations. Photos you upload replace these illustrations. All records persist in `.data/potshaven.db`; generated designs are in `.data/designs`. This data, `.env`, and dependencies are ignored by Git.
+The screens and API run together on **one port, 5173**, using `server/dev.js`. `PORT` changes both together. Run the npm command rather than launching Vite alone. Paths are resolved from the project, so launching from another working directory works.
 
-```sh
-npm run build   # TypeScript + production bundle
-npm test        # API, stock transactions, persistence, permissions, recurrence
-npm run test:browser     # Isolated desktop/mobile workflows (Chromium required)
-npm run test:production  # Check built assets, private sign-in, empty data startup
-npm start       # Serve the built app and API together on PORT (default 3001)
-```
-
-A running process must be restarted in a fresh environment. The app supports adding a shortcut to the home screen; operations need a network connection to the server.
-
-## Included workflows
-
-- Dashboard with upcoming maintenance, project deadlines, overdue visits/payments, equipment servicing, contract renewals, and low-stock reminders.
-- Places and clients, site photos, measurements, access notes, inspection records, and service history.
-- Daily crew assignments and manually ordered routes. A WhatsApp share opens a prepared message; the manager chooses the recipient and sends it. Directions open in Google Maps. Replies do not sync into the app.
-- Maintenance checklists and completion photos. Weekly, fortnightly, monthly, and quarterly jobs generate one next scheduled visit when marked completed, without duplicate follow-ups.
-- Projects, task completion, deadlines, budgets, expenses, and material costs.
-- Plant inventory with per-item photos, low-stock thresholds, restocking, and a permanent movement history. Recording stock used against a job atomically reduces availability; insufficient stock is rejected. Stock usage also contributes to job costs.
-- Purchase requests with owner approval, tool assignments, equipment servicing, and plant watering/pruning/feeding guides.
-- Crew skills and availability, daily workload, vehicles, and fuel/travel costs.
-- Maintenance contracts, renewals, payment records, expenses, and client issues.
-- Branded service reports that can be downloaded or printed to PDF. Completion photos are included when supplied.
-- OpenAI design studio with reference photos, measurements, presets, refinement, saved designs, and watermarked downloads.
-- Portfolio of chosen designs and uploaded project photos. Company name, logo, colour, and watermark are editable.
-
-Reminders are currently **in-app**. Email, automatic WhatsApp sending, automated route optimisation, accounting integrations, and deployment are not configured.
-
-## Connect image generation
-
-Copy `.env.example` to a private `.env` and supply `POTSHAVEN_OPENAI_KEY` on the **server**. `OPENAI_API_KEY` is also accepted. The key is never sent to the browser. In the managed cloud environment, add the key securely to the saved requirement in environment settings and allow HTTPS access to `api.openai.com`.
-
-The default is `gpt-image-2.5-sunburst` at `max` quality and `2560x1440` resolution. These parameters were checked against OpenAI's current official Python SDK [model list](https://github.com/openai/openai-python/blob/main/src/openai/types/image_model.py) and [generation parameters](https://github.com/openai/openai-python/blob/main/src/openai/types/image_generate_params.py). Resolutions above 2560×1440 are documented as experimental. Your account still needs access and billing. Change `POTSHAVEN_IMAGE_MODEL`, `OPENAI_IMAGE_QUALITY`, and `OPENAI_IMAGE_SIZE` to use another supported configuration. When choosing a model without `max` support, use `high` quality.
-
-Image generation and editing use the official Images API through the inherited HTTPS proxy, with TLS verification preserved. The live paid service has not been exercised without a key. Measurements inform concepts; the images are not construction drawings.
-
-## Private use and real records
-
-Set **both** `APP_OWNER_PASSWORD` and `APP_MANAGER_PASSWORD` privately in `.env` or the deployment's secret store before sharing real company records. With neither configured, all visitors get demo owner access; `NODE_ENV=production` alone does **not** enable authentication. Sessions use signed, HTTP-only cookies; manager access cannot edit branding or approve purchases. Use HTTPS for an online deployment.
-
-To begin with real records, choose a **new** directory and disable seeding:
+Local development uses SQLite at `.data/potshaven.db` with clearly labelled fictional demonstration records. Photos are stored in `.data/uploads` and generated images in `.data/designs`; no photos or secrets are committed to Git. Supabase is not needed for local development. To start a separate empty local company workspace while preserving the demo, use a new directory:
 
 ```sh
 DATA_DIR=.data-company DATA_SEED=false npm run dev
 ```
 
-This preserves the demonstration database. Existing databases are never erased or reseeded. An empty workspace has no clients, jobs, stock, or staff; add your company branding and operational records through the app. Changing the currency changes how amounts are displayed; it does not convert existing monetary values.
+Copy `.env.example` to a private `.env` for local configuration. Set both `APP_OWNER_PASSWORD` and `APP_MANAGER_PASSWORD` before sharing real company records. Without them the local app is explicitly a demo with owner access. Production hosting must use HTTPS.
 
-Keep backups of the SQLite database and `designs` directory together. For a live database, use SQLite's backup command/API instead of copying only the database file while it is being written. Keep `.data/session-secret` if you want existing sign-in sessions to remain valid after restoring a backup; otherwise sessions will need to be renewed.
+## Checks
 
-API details: [server/API.md](server/API.md).
+```sh
+npm run build            # TypeScript + production bundle
+npm test                 # SQLite, PostgreSQL, API, media and cloud-handler tests
+npm run test:production  # Production assets, private sign-in, empty workspace
+npm run test:browser     # Operations, inventory, recovery and image preparation
+```
 
-## Publish a live app
+Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwright install chromium` or set `CHROMIUM_PATH`. Tests use temporary databases and servers, leaving company records alone. PostgreSQL tests run SQL against PGlite; they do not require or provision a live Supabase account.
 
-The GitHub repository contains the source code. A live website also needs hosting for the Express server and a persistent disk for SQLite and uploaded/generated images; GitHub Pages cannot provide that backend.
+## Included workflows
 
-A deployment blueprint is included in [render.yaml](render.yaml), with a nonroot Node 24 [Dockerfile](Dockerfile). Connect this repository to a Render Blueprint to create the service. The blueprint requests a **paid Starter service and a 1 GB persistent disk**; review the hosting price before creating it. Automatic deployment is disabled. Owner and manager passwords are generated by the hosting platform; retrieve them privately from the service environment settings. The first deployment starts with an empty company workspace. Add `POTSHAVEN_OPENAI_KEY` privately if you want image generation.
+- Places, clients, measurements, site photos, inspections, and maintenance history.
+- Daily jobs, assigned crews and vehicles, ordered routes, checklists, completion photos, and recurring maintenance. WhatsApp sharing prepares a message for the manager to send; replies do not sync automatically.
+- Plant photos, stock counts, usage/restocking history, low-stock alerts and atomic deductions linked to job costs.
+- Projects, deadlines, task progress, budgets, direct costs, and stock consumption costs.
+- Purchase approvals, equipment servicing, plant care guides, crew skills/workload and transport/fuel costs.
+- Maintenance contracts, payments, expenses, client issues, branded service reports and a portfolio.
+- Photo-based image generation and refinement, official PotsHavenGh branding, and watermarked downloads. Measurements guide concepts; images are not construction drawings.
 
-The deployment configuration has been statically checked; no live hosting service has been created from this workspace. The native production build, private sign-in, and persistence workflows are tested separately. CI is included in `.github/workflows/ci.yml` for pushes and pull requests.
+Reminders are in-app. Email, automatic WhatsApp sending and route optimisation are not configured.
+
+## Loading and recovery
+
+Pages load on demand. Ordinary changes update the affected record without fetching the entire company again. Uploaded photos are resized before sending, stored separately, and privately cached. Temporary read failures retry automatically; a later interruption keeps already loaded records visible and prevents saves until reconnected. Writes are never automatically retried, avoiding duplicate stock deductions.
+
+Local production: `npm run build && npm start` serves the UI and API together on `PORT` (default3001). Keep backups of the SQLite database, `uploads` and `designs` directories together, using SQLite’s backup API while live. Supabase hosts these records and media in the same managed database. Currency settings change labels, not existing monetary values.
+
+A [Dockerfile](Dockerfile) and [Render blueprint](render.yaml) remain available for an alternative SQLite service with a persistent disk; the Render plan is paid and has not been provisioned. No live hosting account is created by these files.
+
+Details: [API](server/API.md) · [PostgreSQL adapter](server/POSTGRES.md) · [Supabase setup](SUPABASE_SETUP.md).

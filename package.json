@@ -4,13 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n api,web \"node --watch server/index.js\" \"vite --host 0.0.0.0\"",
+    "dev": "node server/dev.js",
     "build": "tsc -b && vite build",
     "start": "NODE_ENV=production node server/index.js",
     "test": "node --test server/*.test.js",
     "typecheck": "tsc -b",
-    "test:browser": "node tests/browser-operations.mjs && node tests/browser-inventory.mjs",
-    "test:production": "node tests/production-smoke.mjs"
+    "test:browser": "node tests/browser-operations.mjs && node tests/browser-inventory.mjs && node tests/browser-connection.mjs && node tests/browser-images.mjs",
+    "test:production": "node tests/production-smoke.mjs",
+    "test:connection": "node tests/browser-connection.mjs",
+    "test:images": "node tests/browser-images.mjs"
   },
   "dependencies": {
     "@fontsource/dm-sans": "^5.3.0",
@@ -18,21 +20,22 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "lucide-react": "^0.468.0",
+    "postgres": "^3.4.9",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "undici": "^7.16.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.11",
     "@playwright/test": "^1.56.0",
     "@types/node": "^24.10.0",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^5.1.0",
-    "concurrently": "^9.2.1",
     "typescript": "~5.9.3",
     "vite": "^7.2.2"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": "24.x"
   }
 }

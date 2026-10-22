@@ -1,10 +1,13 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
 import { createApp } from './app.js';
 import { createStore } from './store.js';
 import { resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const projectRoot = fileURLToPath(new URL('../', import.meta.url));
+config({ path: join(projectRoot, '.env'), quiet: true });
 const port = Number(process.env.PORT || 3001);
-const dataDir = resolve(process.env.DATA_DIR || '.data');
+const dataDir = resolve(projectRoot, process.env.DATA_DIR || '.data');
 const store = createStore(join(dataDir, 'potshaven.db'), { seed: process.env.DATA_SEED !== 'false' });
 const app = createApp({ store, dataDir });
 const server = app.listen(port, '0.0.0.0', () => {

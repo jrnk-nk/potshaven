@@ -45,7 +45,7 @@ try{
  const png=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=20;canvas.height=20;const c=canvas.getContext('2d');c.fillStyle='#456745';c.fillRect(0,0,20,20);return canvas.toDataURL('image/png').split(',')[1];});
  const photoFile={name:'site-photo.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')};
  await page.getByLabel('Upload site photo',{exact:true}).setInputFiles(photoFile);
- await expect(page.getByAltText('Site photo preview')).toHaveAttribute('src',/^data:image\/jpeg/);
+ await expect(page.getByAltText('Site photo preview')).toHaveAttribute('src',/^data:image\/(png|jpeg|webp)/);
  await page.getByRole('button',{name:'Add place',exact:true}).click();
  await expect(page.getByRole('dialog')).toHaveCount(0);
  let card=page.locator('article').filter({has:page.getByRole('heading',{name:prefix+' Garden',exact:true})});

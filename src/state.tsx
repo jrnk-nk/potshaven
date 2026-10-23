@@ -47,8 +47,10 @@ export function AppProvider({children}: {children: React.ReactNode}) {
           if(failure.status===401){expireSession();return;}
           if(failure.retryable&&attempt+1<attempts)continue;
           setError(failure.message);setErrorCode(failure.code);markConnection(failure.setup?'setup':'offline');
-          if(failure.retryable){
-            const wait=Math.min(30000,1500*2**Math.min(recoveryAttempts.current++,5));
+          if(failure.retryable||failure.setup){
+            // A deployment may gain its private settings while this tab is
+            // still open. Recheck gently without repeating the initial load.
+            const wait=failure.setup?30000:Math.min(30000,1500*2**Math.min(recoveryAttempts.current++,5));
             retryTimer.current=setTimeout(()=>{retryTimer.current=null;if(mounted.current)void refresh();},wait);
           }
           return;

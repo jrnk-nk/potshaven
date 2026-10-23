@@ -125,6 +125,39 @@ try {
   await expect(interrupted.locator('.error-panel')).toHaveCount(0);
   console.log('PASS interrupted temporary server responses recover automatically on mobile');
   await interrupted.close();
+
+  const setup=await browser.newPage({viewport:{width:390,height:844},reducedMotion:'reduce'});
+  setup.on('pageerror',error=>errors.push(error.message));
+  const setupTime=new Date('2026-10-23T12:00:00Z');
+  await setup.clock.install({time:setupTime});
+  await setup.clock.pauseAt(setupTime);
+  let configured=false,setupRequests=0;
+  const setupMessage='DATABASE_URL must be the private PostgreSQL Transaction Pooler connection string from Supabase, rather than the project website URL.';
+  await setup.route('**/api/state',route=>{
+    setupRequests++;
+    return route.fulfill({status:configured?401:503,contentType:'application/json',body:JSON.stringify(configured?{error:'Please sign in to continue.'}:{error:setupMessage,code:'DATABASE_NOT_CONFIGURED'})});
+  });
+  await setup.goto(origin);
+  const setupHeading=setup.getByRole('heading',{name:'Finish setting up your workspace',exact:true});
+  const checkConnection=setup.getByRole('button',{name:'Check connection',exact:true});
+  await expect(setupHeading).toBeVisible();
+  await expect(setup.locator('.setup-intro')).toHaveText(setupMessage);
+  await expect(setup.locator('.setup-guidance')).toContainText(new URL(origin).hostname);
+  await expect(checkConnection).toBeEnabled();
+  assert.equal(setupRequests,1,'Missing configuration must show its guidance without immediate repeated startup requests.');
+  await checkConnection.click();
+  await expect(checkConnection).toBeEnabled();
+  assert.equal(setupRequests,2,'Manual connection checking must remain available during setup.');
+  await setup.clock.runFor(29999);
+  assert.equal(setupRequests,2,'Configuration rechecks must wait thirty seconds.');
+  await expect(setupHeading).toBeVisible();
+  configured=true;
+  await setup.clock.runFor(1);
+  await expect(setup.getByRole('heading',{name:'Welcome back.',exact:true})).toBeVisible();
+  assert.equal(setupRequests,3,'A foreground setup tab must recover without a reload or another manual click.');
+  await expect(setupHeading).toHaveCount(0);
+  console.log('PASS setup preserves the specific configuration error and website, supports manual checking, and opens sign-in automatically after configuration becomes available');
+  await setup.close();
   assert.deepEqual(errors,[],'Connection recovery must not create browser runtime errors.');
   console.log('PASS no browser runtime errors');
 }catch(error){

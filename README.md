@@ -6,6 +6,8 @@ A simple landscaping and decorating workspace for the owner and manager. Workers
 
 ## Vercel + Supabase
 
+The configured live workspace is [potshaven-ekl2.vercel.app](https://potshaven-ekl2.vercel.app/). The root of `potshaven.vercel.app` redirects there when this configuration is deployed to that Vercel project. All app screens use hash routes, which browsers retain across this redirect. API and media paths are not redirected between hosts.
+
 The Vercel site needs the included serverless backend and a database. Follow [SUPABASE_SETUP.md](SUPABASE_SETUP.md) to create/connect a Supabase project, add its private `DATABASE_URL` plus owner/manager passwords in Vercel, then redeploy. `vercel.json` routes API and authenticated media requests to `api/index.js`; `dist` serves the screens. Hosted records and photos persist in a private PostgreSQL schema, with no temporary SQLite fallback.
 
 The repository has no database credentials. Supabase/Vercel account settings must be connected securely by the account owner. Image generation and the Company assistant share the private `POTSHAVEN_OPENAI_KEY` (or `OPENAI_API_KEY`); it stays on the server. `POTSHAVEN_ASSISTANT_MODEL` optionally overrides the text model.

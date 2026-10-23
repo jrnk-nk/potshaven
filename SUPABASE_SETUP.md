@@ -2,6 +2,8 @@
 
 The app now includes its Vercel backend. It needs a durable database and private sign-in passwords before the company workspace can open. A Supabase API URL or public/anon key alone is not a database connection.
 
+For the existing company workspace, open [potshaven-ekl2.vercel.app](https://potshaven-ekl2.vercel.app/). `potshaven.vercel.app` is a different deployment address; settings saved in one Vercel project do not configure another. This repository redirects the shorter address's root to the configured workspace when deployed there. If an older deployment still shows setup, use the configured address directly.
+
 1. Open [Supabase](https://supabase.com/dashboard), create a project named `PotsHavenGh`, and keep its database password privately. You can also use an existing project you own.
 2. In the project, choose **Connect → Transaction pooler** and copy the PostgreSQL connection string. Use the pooler hostname and port **6543**, insert your database password into the string, and URL-encode special password characters if needed. Do not paste this secret into chat or a repository file.
 3. Open the `potshaven-ekl2` project in **Vercel → Settings → Environment Variables**. Add these server-only variables for the environments you use:

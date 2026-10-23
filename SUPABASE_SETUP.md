@@ -30,4 +30,6 @@ Image generation is optional. Add `POTSHAVEN_OPENAI_KEY` privately in Vercel and
 
 Check that the Supabase project is active, the connection string uses the Transaction Pooler (not the HTTPS project URL), the database password is correct, all three private variables are set in the appropriate Vercel environment, and the latest deployment was redeployed after changes. The app shows setup guidance for missing configuration and reconnects automatically for temporary interruptions.
 
+The latest backend also repairs company settings saved in the legacy double-encoded format. This happens automatically after deployment, preserves a private backup, and does not clear company records or reset passwords. `/api/health` now verifies real database reads instead of reporting only that the server started.
+
 This repository includes tests against an embedded PostgreSQL engine and the Vercel handler. Connecting an actual Supabase project and verifying the deployed site require access to your Supabase and Vercel accounts; that connection has not been made by the coding agent.

@@ -3,6 +3,7 @@ import postgres from 'postgres';
 import {collections, validate, AppError} from './store.js';
 import {seedData} from './seed.js';
 import {databaseTlsOptions} from './database-tls.js';
+import {repairLegacySettings} from './settings-repair.js';
 
 const SQL_FUNCTIONS = [
 `CREATE OR REPLACE FUNCTION potshaven_private.next_occurrence(p_anchor text, p_frequency text, p_today text)
@@ -226,7 +227,8 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
   try {
     await run(POSTGRES_SCHEMA_SQL);
     const initial = seed ? seedData(now) : {settings: seedData(now).settings};
-    await run('SELECT potshaven_private.initialize_workspace($1::boolean, $2::jsonb)', [Boolean(seed), JSON.stringify(initial)]);
+    await run('SELECT potshaven_private.initialize_workspace($1::boolean, $2::jsonb)', [Boolean(seed), initial]);
+    await repairLegacySettings(run);
   } catch (error) {
     if (sql) await sql.end({timeout: 5}).catch(() => {});
     throw error;
@@ -247,7 +249,7 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
       if (collection === 'stockMovements') throw new AppError('Stock history is managed automatically and cannot be edited.', 403);
       const record = {...input, id: input.id || randomUUID()};
       validate(collection, record);
-      return (await run('INSERT INTO potshaven_private.records(collection, id, data) VALUES ($1, $2, $3::jsonb) ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data RETURNING data', [collection, record.id, JSON.stringify(record)]))[0].data;
+      return (await run('INSERT INTO potshaven_private.records(collection, id, data) VALUES ($1, $2, $3::jsonb) ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data RETURNING data', [collection, record.id, record]))[0].data;
     },
     async update(collection, id, input, actor = 'Owner') {
       checkCollection(collection); checkObject(input);
@@ -255,7 +257,7 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
       const previous = await store.get(collection, id);
       if (!previous) throw new AppError('Record not found.', 404);
       validate(collection, {...previous, ...input, id});
-      return (await run('SELECT potshaven_private.update_record($1, $2, $3::jsonb, $4, $5, $6, $7) AS data', [collection, id, JSON.stringify(input), actor, randomUUID(), randomUUID(), new Date().toISOString()]))[0].data;
+      return (await run('SELECT potshaven_private.update_record($1, $2, $3::jsonb, $4, $5, $6, $7) AS data', [collection, id, input, actor, randomUUID(), randomUUID(), new Date().toISOString()]))[0].data;
     },
     async remove(collection, id) {
       checkCollection(collection);
@@ -266,7 +268,7 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
     },
     async updateSettings(input) {
       const clean = cleanSettings(input);
-      return (await run("INSERT INTO potshaven_private.metadata(key, value) VALUES ('settings', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = potshaven_private.metadata.value || EXCLUDED.value RETURNING value", [JSON.stringify(clean)]))[0].value;
+      return (await run("INSERT INTO potshaven_private.metadata(key, value) VALUES ('settings', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = potshaven_private.metadata.value || EXCLUDED.value RETURNING value", [clean]))[0].value;
     },
     async stock(id, quantity, {type = 'use', jobId = '', note = '', actor = 'Owner'} = {}) {
       if (!Number.isFinite(quantity) || quantity <= 0) throw new AppError('Quantity must be greater than zero.');
@@ -293,7 +295,7 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
       return {...Object.fromEntries(collections.map(collection => [collection, []])), ...row.state};
     },
     async getSessionSecret() {
-      return (await run("INSERT INTO potshaven_private.metadata(key, value) VALUES ('session-secret', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = potshaven_private.metadata.value RETURNING value", [JSON.stringify(randomBytes(48).toString('hex'))]))[0].value;
+      return (await run("INSERT INTO potshaven_private.metadata(key, value) VALUES ('session-secret', to_jsonb($1::text)) ON CONFLICT (key) DO UPDATE SET value = potshaven_private.metadata.value RETURNING value", [randomBytes(48).toString('hex')]))[0].value;
     },
     async putMedia(key, bytes, contentType) {
       if (typeof key !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9/_.-]{0,200}$/.test(key) || key.split('/').includes('..')) throw new AppError('Invalid media name.');

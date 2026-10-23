@@ -17,6 +17,15 @@ const tlsErrorCodes = new Set([
   'ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE', 'ERR_SSL_TLSV1_ALERT_UNKNOWN_CA',
   'ERR_SSL_WRONG_VERSION_NUMBER',
 ]);
+const databaseIssues = {
+  WORKSPACE_SCHEMA_INVALID: 'INVALID_SETTINGS',
+  '42P01': 'MISSING_TABLE',
+  '42703': 'MISSING_COLUMN',
+  '42883': 'MISSING_FUNCTION',
+  '42601': 'QUERY_SYNTAX',
+  '42702': 'AMBIGUOUS_COLUMN',
+  '42804': 'INVALID_DATA_TYPE',
+};
 
 // Return only fixed classifications. Driver errors can contain credentials,
 // SQL, and hostnames, so neither their text nor their raw codes leave here.
@@ -40,5 +49,12 @@ export function databaseDiagnostic(error) {
 
 export function databaseFailure(error) {
   const diagnostic = databaseDiagnostic(error);
-  return {error: databaseDiagnostics[diagnostic], code: 'DATABASE_UNAVAILABLE', diagnostic};
+  const seen = new Set();
+  let databaseIssue;
+  for (let depth = 0; depth < 4 && error && typeof error === 'object' && !seen.has(error); depth++) {
+    seen.add(error);
+    if (Object.hasOwn(databaseIssues, error.code)) { databaseIssue = databaseIssues[error.code]; break; }
+    error = error.cause;
+  }
+  return {error: databaseDiagnostics[diagnostic], code: 'DATABASE_UNAVAILABLE', diagnostic, ...(databaseIssue ? {databaseIssue} : {})};
 }

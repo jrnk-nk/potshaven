@@ -35,8 +35,9 @@ Copy `.env.example` to a private `.env` for local configuration. Set both `APP_O
 npm run build            # TypeScript + production bundle
 npm test                 # SQLite, PostgreSQL, API, media and cloud-handler tests
 npm run test:production  # Production assets, private sign-in, empty workspace
-npm run test:browser     # Operations, inventory, recovery, images and studio chat
+npm run test:browser     # Operations, inventory, recovery, images, studio and sign-in
 npm run test:studio      # Photo attachments, saved chats, edits and mobile composer
+npm run test:auth        # Owner/manager sign-in, expiry and workspace-load recovery
 ```
 
 Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwright install chromium` or set `CHROMIUM_PATH`. Tests use temporary databases and servers, leaving company records alone. PostgreSQL tests run SQL against PGlite; they do not require or provision a live Supabase account.
@@ -56,6 +57,8 @@ Reminders are in-app. Email, automatic WhatsApp sending and route optimisation a
 ## Loading and recovery
 
 Pages load on demand. Ordinary changes update the affected record without fetching the entire company again. Uploaded photos are resized before sending, stored separately, and privately cached. Temporary read failures retry automatically; a later interruption keeps already loaded records visible and prevents saves until reconnected. Writes are never automatically retried, avoiding duplicate stock deductions.
+
+Database health checks perform actual reads on every request. After an accepted sign-in, a failed workspace load shows the connection error and a retry button; retrying does not require submitting the password again. Expired sessions clear private records and return to sign-in.
 
 Local production: `npm run build && npm start` serves the UI and API together on `PORT` (default3001). Keep backups of the SQLite database, `uploads` and `designs` directories together, using SQLite’s backup API while live. Supabase hosts these records and media in the same managed database. Currency settings change labels, not existing monetary values.
 

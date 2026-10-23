@@ -9,7 +9,7 @@ export type AppData = { [key: string]: any; places: RecordData[]; jobs: RecordDa
 const collections = ['places','jobs','inventory','stockMovements','workers','vehicles','contracts','payments','expenses','purchaseRequests','equipment','issues','careGuides','designs'];
 const empty: AppData = {places:[],jobs:[],inventory:[],workers:[],vehicles:[],contracts:[],payments:[],expenses:[],purchaseRequests:[],equipment:[],issues:[],careGuides:[],designs:[],stockMovements:[],settings:{}};
 type Connection = 'connecting' | 'online' | 'offline' | 'setup';
-type Context = { data: AppData; loading: boolean; refreshing: boolean; error: string; errorCode: string; connection: Connection; hasData: boolean; authenticated: boolean; refresh: () => Promise<void>; create: (collection: string, payload: any) => Promise<any>; update: (collection: string, id: string, payload: any) => Promise<any>; remove: (collection: string, id: string) => Promise<void>; notify: (message: string) => void; openJob: (id?: string) => void; toast: string };
+type Context = { data: AppData; loading: boolean; refreshing: boolean; error: string; errorCode: string; connection: Connection; hasData: boolean; authenticated: boolean; refresh: () => Promise<void>; signIn: (role: string, password: string) => Promise<void>; create: (collection: string, payload: any) => Promise<any>; update: (collection: string, id: string, payload: any) => Promise<any>; remove: (collection: string, id: string) => Promise<void>; notify: (message: string) => void; openJob: (id?: string) => void; toast: string };
 const AppContext = createContext<Context>(null!);
 function workspace(value: any): AppData {
   if (!value || typeof value !== 'object' || collections.some(key => !Array.isArray(value[key])) || !value.settings || typeof value.settings !== 'object' || Array.isArray(value.settings)) {
@@ -58,6 +58,16 @@ export function AppProvider({children}: {children: React.ReactNode}) {
     });
     flightEpoch.current=version;inFlight.current=task;return task;
   },[]);
+  const signIn=async(role:string,password:string)=>{
+    await api('/auth/login',{method:'POST',body:JSON.stringify({role,password})});
+    // A successful login establishes the session even if loading its company
+    // data fails. Start a fresh read so a pre-login 401 cannot replace it, and
+    // show workspace recovery rather than silently returning to the password.
+    epoch.current++;loaded.current=false;lastSuccess.current=0;clearRetry();
+    setData(empty);setHasData(false);setError('');setErrorCode('');
+    setAuthenticated(true);setLoading(true);markConnection('connecting');
+    await refresh();
+  };
   useEffect(()=>{
     mounted.current=true;void refresh();
     const online=()=>{recoveryAttempts.current=0;void refresh();};
@@ -95,7 +105,7 @@ export function AppProvider({children}: {children: React.ReactNode}) {
   };
   const remove=async(collection:string,id:string)=>{await mutate(`/${collection}/${encodeURIComponent(id)}`,{method:'DELETE'});reconcile(collection,null,id);};
   const openJob=(id?:string)=>window.dispatchEvent(new CustomEvent('potshaven:job',{detail:id}));
-  return <AppContext.Provider value={{data,loading,refreshing,error,errorCode,connection,hasData,authenticated,refresh,create,update,remove,notify:setToast,openJob,toast}}>{children}</AppContext.Provider>;
+  return <AppContext.Provider value={{data,loading,refreshing,error,errorCode,connection,hasData,authenticated,refresh,signIn,create,update,remove,notify:setToast,openJob,toast}}>{children}</AppContext.Provider>;
 }
 export const useApp=()=>useContext(AppContext);
 export const today=()=>new Date().toLocaleDateString('en-CA',{timeZone:'Africa/Accra'});

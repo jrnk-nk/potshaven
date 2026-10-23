@@ -4,6 +4,8 @@ This review covers workspace recovery, unified Sites, financial features being t
 
 ## Changes
 
+- Shared server configuration uses plain JavaScript so Vercel can package its runtime imports correctly. The production smoke check imports the cloud entry point with TypeScript stripping disabled, catching the dependency issue found during live release verification.
+
 - Sites brings project work, maintenance, inspections, photos, follow-ups and service reports together. Existing site/job records and legacy links remain usable.
 - Money features are disabled for both roles in the interface, API responses and assistant proposals. Financial records and hidden nested metadata remain stored; operational edits cannot erase those values.
 - Manager operational saves and the owner’s activity event commit together. Private activity has owner-only reads, persistent read receipts and an unread count. The browser refreshes every 30 seconds while visible and clears activity when the session changes.

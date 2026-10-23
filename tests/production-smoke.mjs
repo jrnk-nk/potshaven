@@ -5,8 +5,16 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {once} from 'node:events';
 import {randomBytes} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {createApp} from '../server/app.js';
 import {createStore} from '../server/store.js';
+// Vercel emits traced TypeScript files as JavaScript but leaves import paths
+// in ESM .js files unchanged. Keep the production handler's runtime dependency
+// graph executable without Node's development-time TypeScript stripping.
+execFileSync(process.execPath, ['--no-experimental-strip-types', '--input-type=module', '-e',
+ `const {default: handler}=await import(${JSON.stringify(new URL('../api/index.js', import.meta.url).href)}); if(typeof handler!=='function')throw new Error('Invalid production handler');`
+]);
+console.log('PASS production handler imports with plain JavaScript runtime dependencies');
 const dataDir=mkdtempSync(join(tmpdir(),'potshaven-production-'));
 const store=createStore(join(dataDir,'check.db'),{seed:false});
 const password=randomBytes(32).toString('hex');

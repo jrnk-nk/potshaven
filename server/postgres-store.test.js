@@ -186,6 +186,90 @@ test('PostgreSQL requires a server connection string instead of a temporary-file
   await assert.rejects(createPostgresStore('https://example.supabase.co',{}),error=>error.status===503&&/Transaction Pooler/.test(error.message));
 });
 
+test('PostgreSQL rejects stale manager snapshots before changing approvals, deadlines or private task data',async()=>{
+  const cases=[
+    ['purchaseRequests',{id:'request',title:'Planters',status:'Pending',requestedBy:'manager',estimatedCost:100},{status:'Approved'},{status:'Pending',estimatedCost:900}],
+    ['jobs',{id:'project',title:'Garden installation',type:'Maintenance',status:'Scheduled',deadline:'2026-10-30',crewIds:[],tasks:[]},{type:'Project',deadline:'2026-11-01'},{deadline:'2027-01-01'}],
+    ['jobs',{id:'care',title:'Garden care',type:'Maintenance',status:'Scheduled',crewIds:[],tasks:[{id:'water',text:'Water plants',done:false,privateCost:100}]},{tasks:[{id:'water',text:'Water plants',done:false,privateCost:200}]},{tasks:[{id:'water',text:'Water plants',done:true,privateCost:100}]}],
+  ];
+  for(const [collection,initial,ownerPatch,managerPatch] of cases){
+    await store.put(collection,initial);
+    const authorizedSnapshot=await store.get(collection,initial.id);
+    const changed=await store.update(collection,initial.id,ownerPatch);
+    await assert.rejects(store.update(collection,initial.id,managerPatch,'Manager',{expected:authorizedSnapshot}),error=>error.status===409&&/changed while you were editing/.test(error.message));
+    assert.deepEqual(await store.get(collection,initial.id),changed);
+  }
+  const current=await store.get('jobs','care');
+  const saved=await store.update('jobs','care',{status:'In progress'},'Manager',{expected:current});
+  assert.equal(saved.status,'In progress');
+  assert.equal(saved.tasks[0].privateCost,200);
+});
+
+test('PostgreSQL upgrades deployed schema version one without losing data, sessions or old function compatibility',async()=>{
+  await store.put('places',{id:'existing',name:'Existing customer'});
+  const secret=await store.getSessionSecret();
+  await database.exec(`
+    DROP FUNCTION potshaven_private.update_record(text,text,jsonb,text,text,text,text,jsonb);
+    CREATE FUNCTION potshaven_private.update_record(p_collection text,p_id text,p_patch jsonb,p_actor text,p_movement_id text,p_followup_id text,p_now text)
+    RETURNS jsonb LANGUAGE SQL SET search_path=pg_catalog,potshaven_private AS 'SELECT data FROM potshaven_private.records WHERE collection=p_collection AND id=p_id';
+    UPDATE potshaven_private.metadata SET value='"1"'::jsonb WHERE key='schemaVersion';
+  `);
+  const upgraded=await createPostgresStore('',{query});
+  assert.equal((await upgraded.get('places','existing')).name,'Existing customer');
+  assert.equal(await upgraded.getSessionSecret(),secret);
+  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value,'2');
+  const signatures=(await query("SELECT to_regprocedure('potshaven_private.update_record(text,text,jsonb,text,text,text,text)') AS old, to_regprocedure('potshaven_private.update_record(text,text,jsonb,text,text,text,text,jsonb)') AS guarded")).rows[0];
+  assert.ok(signatures.old);
+  assert.ok(signatures.guarded);
+  await database.exec('CREATE ROLE potshaven_guard_anon');
+  assert.equal((await query("SELECT has_function_privilege('potshaven_guard_anon','potshaven_private.update_record(text,text,jsonb,text,text,text,text,jsonb)','EXECUTE') AS allowed")).rows[0].allowed,false);
+  const expected=await upgraded.get('places','existing');
+  assert.equal((await upgraded.update('places','existing',{name:'Updated customer'},'Manager',{expected})).name,'Updated customer');
+  await createPostgresStore('',{query});
+  assert.equal((await upgraded.get('places','existing')).name,'Updated customer');
+  await query("UPDATE potshaven_private.metadata SET value='\"3\"'::jsonb WHERE key='schemaVersion'");
+  await createPostgresStore('',{query});
+  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value,'3','Older application instances must not downgrade a future migration marker.');
+  // Restore the fixture marker so subsequent independent tests use this schema.
+  await query("UPDATE potshaven_private.metadata SET value='\"2\"'::jsonb WHERE key='schemaVersion'");
+});
+
+test('PostgreSQL sign-in limits are atomic across independent cloud instances and expire after fifteen minutes',async()=>{
+  const other=await createPostgresStore('',{query});
+  const key='a'.repeat(64), otherRole='b'.repeat(64), now=Date.UTC(2026,9,23);
+  const attempts=await Promise.all(Array.from({length:24},(_,index)=>(index%2?store:other).recordLoginAttempt(key,false,now)));
+  assert.equal(attempts.filter(Boolean).length,10);
+  assert.equal(await other.recordLoginAttempt(key,true,now+1),false,'A correct password cannot bypass an active lockout.');
+  assert.equal(await other.recordLoginAttempt(otherRole,true,now+1),true);
+  assert.equal(await store.recordLoginAttempt(key,false,now+2),false,'A different role signing in must not clear this counter.');
+  const cold=await createPostgresStore('',{query});
+  assert.equal(await cold.recordLoginAttempt(key,false,now+3),false,'A cold function must enforce the stored counter.');
+  assert.equal(await cold.recordLoginAttempt(key,false,now+15*60*1000),true);
+  assert.equal(await cold.recordLoginAttempt(key,true,now+15*60*1000+1),true);
+  for(let attempt=0;attempt<10;attempt++)assert.equal(await cold.recordLoginAttempt(key,false,now+15*60*1000+2),true);
+  assert.equal(await store.recordLoginAttempt(key,false,now+15*60*1000+3),false);
+  assert.ok(!JSON.stringify(await store.state()).includes(key),'Private authentication counters must not enter workspace state.');
+});
+
+test('PostgreSQL sign-in counters reject untrusted keys and never replay an ambiguous committed attempt',async()=>{
+  for(const key of ['owner:127.0.0.1','session-secret','x'.repeat(64)])await assert.rejects(store.recordLoginAttempt(key,false),error=>error.status===400);
+  const key='c'.repeat(64), now=Date.UTC(2026,9,23);
+  // Prime cleanup before simulating a lost reply to the atomic counter write.
+  await store.recordLoginAttempt('d'.repeat(64),true,now);
+  let writes=0;
+  const broken=await createPostgresStore('',{query:async(text,parameters)=>{
+    const result=await query(text,parameters);
+    if(text.includes("RETURNING (value->>'allowed')::boolean")){
+      writes++;
+      throw Object.assign(new Error('Connection dropped after attempt was committed'),{code:'ECONNRESET'});
+    }
+    return result;
+  }});
+  await assert.rejects(broken.recordLoginAttempt(key,false,now),error=>error.code==='ECONNRESET');
+  assert.equal(writes,1);
+  assert.equal((await query("SELECT value->>'failures' AS failures FROM potshaven_private.metadata WHERE key=$1",['login-attempt:'+key])).rows[0].failures,'1');
+});
+
 
 test('Supabase adapter composes with serverless API, authenticated photos and cold-start sessions',async()=>{
   const env={DATABASE_URL:'postgresql://connection-is-injected.invalid/company',APP_OWNER_PASSWORD:'test-owner-password',APP_MANAGER_PASSWORD:'test-manager-password'};

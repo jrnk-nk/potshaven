@@ -65,12 +65,14 @@ AI replies and concepts need the configured provider key, model access, and bill
 
 Pages load on demand. Ordinary changes update the affected record without fetching the entire company again. Uploaded photos are resized before sending, stored separately, and served with role checks. Temporary read failures retry automatically; a later interruption keeps already loaded records visible and prevents saves until reconnected. Writes are never automatically retried, avoiding duplicate stock deductions.
 
-Database health checks perform actual reads on every request. After an accepted sign-in, a failed workspace load shows the connection error and a retry button; retrying does not require submitting the password again. Expired sessions clear private records and return to sign-in.
+Database health checks perform actual reads on every request. Interrupted PostgreSQL reads retry once on a fresh connection; failed startup releases its connection pool before another attempt. Interrupted response bodies and temporary gateway failures also trigger browser recovery. After an accepted sign-in, a failed workspace load shows the connection error and a retry button; retrying does not require submitting the password again. Expired sessions clear private records and return to sign-in.
+
+Manager edits compare the authorized record with its current database value while holding the write lock. If an owner reviews a purchase or changes a job during the request, the stale manager save is rejected instead of overwriting that decision.
 
 Local production: `npm run build && npm start` serves the UI and API together on `PORT` (default3001). Keep backups of the SQLite database, `uploads` and `designs` directories together, using SQLite’s backup API while live. Supabase hosts these records and media in the same managed database. Currency settings change labels, not existing monetary values.
 
 A [Dockerfile](Dockerfile) and [Render blueprint](render.yaml) remain available for an alternative SQLite service with a persistent disk; the Render plan is paid and has not been provisioned. No live hosting account is created by these files.
 
-Details: [API](server/API.md) · [PostgreSQL adapter](server/POSTGRES.md) · [Supabase setup](SUPABASE_SETUP.md).
+Details: [API](server/API.md) · [PostgreSQL adapter](server/POSTGRES.md) · [Supabase setup](SUPABASE_SETUP.md) · [Reliability and access review](docs/RELIABILITY_REVIEW.md).
 
 The [owner/manager access rules](docs/ROLE_WORKSPACES.md) apply to the interface, API, returned records, assistant context/actions, and private images. Manager operational updates preserve hidden owner fields. Separate sign-in roles receive different workspaces; account changes discard stale private replies.

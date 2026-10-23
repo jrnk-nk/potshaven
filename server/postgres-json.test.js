@@ -40,6 +40,9 @@ test('production JSONB serialization preserves settings, records, stock edits an
   assert.match(secret, /^[a-f0-9]{96}$/);
   await store.put('inventory', {id: 'plant', name: 'Peace lily', category: 'Plants', quantity: 8, cost: 75});
   await store.put('places', {id: 'hotel', name: 'Private client hotel', address: 'Accra'});
+  const approvedPlace = await store.get('places', 'hotel');
+  await store.update('places', 'hotel', {address: 'Updated in Accra'}, 'Manager', {expected: approvedPlace});
+  await assert.rejects(store.update('places', 'hotel', {address: 'Outdated manager edit'}, 'Manager', {expected: approvedPlace}), error => error.status === 409);
   const changed = await store.update('inventory', 'plant', {name: 'Healthy peace lily', quantity: 7});
   assert.equal(changed.name, 'Healthy peace lily');
   assert.equal(changed.quantity, 7);

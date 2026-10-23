@@ -4,6 +4,8 @@ import {collections, validate, AppError} from './store.js';
 import {seedData} from './seed.js';
 import {databaseTlsOptions} from './database-tls.js';
 import {repairLegacySettings} from './settings-repair.js';
+import {transientDatabaseError} from './database-diagnostics.js';
+import {setTimeout as delay} from 'node:timers/promises';
 
 const SQL_FUNCTIONS = [
 `CREATE OR REPLACE FUNCTION potshaven_private.next_occurrence(p_anchor text, p_frequency text, p_today text)
@@ -65,13 +67,16 @@ BEGIN
   RETURN jsonb_build_object('item', next_item, 'movement', movement);
 END
 $function$`,
-`CREATE OR REPLACE FUNCTION potshaven_private.update_record(p_collection text, p_id text, p_patch jsonb, p_actor text, p_movement_id text, p_followup_id text, p_now text)
+`CREATE OR REPLACE FUNCTION potshaven_private.update_record(p_collection text, p_id text, p_patch jsonb, p_actor text, p_movement_id text, p_followup_id text, p_now text, p_expected jsonb)
 RETURNS jsonb LANGUAGE plpgsql SET search_path = pg_catalog, potshaven_private AS $function$
 DECLARE previous jsonb; next_record jsonb; movement jsonb; delta numeric; followup jsonb; followup_id text; anchor text; scheduled date; lower_bound date; visit_date date; deadline date; tasks jsonb;
 BEGIN
   IF p_collection = 'stockMovements' THEN RAISE EXCEPTION USING MESSAGE = 'Stock history is managed automatically and cannot be edited.', ERRCODE = 'P0001', DETAIL = '403'; END IF;
   SELECT data INTO previous FROM potshaven_private.records WHERE collection = p_collection AND id = p_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'Record not found.', ERRCODE = 'P0001', DETAIL = '404'; END IF;
+  IF p_expected IS NOT NULL AND previous IS DISTINCT FROM p_expected THEN
+    RAISE EXCEPTION USING MESSAGE = 'This record changed while you were editing. Refresh and try again.', ERRCODE = 'P0001', DETAIL = '409';
+  END IF;
   next_record := previous || p_patch || jsonb_build_object('id', p_id);
   IF p_collection = 'inventory' AND previous->'quantity' IS DISTINCT FROM next_record->'quantity' THEN
     delta := (next_record->>'quantity')::numeric - (previous->>'quantity')::numeric;
@@ -173,13 +178,13 @@ BEGIN
   );
   CREATE TABLE IF NOT EXISTS potshaven_private.metadata (key text PRIMARY KEY, value jsonb NOT NULL);
   CREATE TABLE IF NOT EXISTS potshaven_private.media (key text PRIMARY KEY, mime text NOT NULL, data text NOT NULL);
-  IF coalesce((SELECT value #>> '{}' FROM potshaven_private.metadata WHERE key = 'schemaVersion'), '') <> '1' THEN
+  IF coalesce((SELECT CASE WHEN value #>> '{}' ~ '^[0-9]+$' THEN (value #>> '{}')::numeric ELSE 0 END FROM potshaven_private.metadata WHERE key = 'schemaVersion'), 0) < 2 THEN
     CREATE INDEX IF NOT EXISTS potshaven_collection_sequence ON potshaven_private.records(collection, sequence);
     CREATE UNIQUE INDEX IF NOT EXISTS potshaven_followup_once ON potshaven_private.records ((data->>'previousJobId')) WHERE collection = 'jobs' AND coalesce(data->>'previousJobId', '') <> '';
     ${SQL_FUNCTIONS.map(sql => `EXECUTE $ddl$${sql}$ddl$;`).join('\n    ')}
     REVOKE ALL ON ALL TABLES IN SCHEMA potshaven_private FROM PUBLIC;
     REVOKE ALL ON ALL FUNCTIONS IN SCHEMA potshaven_private FROM PUBLIC;
-    INSERT INTO potshaven_private.metadata(key, value) VALUES ('schemaVersion', '"1"'::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+    INSERT INTO potshaven_private.metadata(key, value) VALUES ('schemaVersion', '"2"'::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
   END IF;
 END
 $bootstrap$`;
@@ -224,6 +229,18 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
       return Array.isArray(result) ? result : result.rows;
     } catch (error) { throw translateError(error); }
   };
+  // postgres.js reconnects after losing a pooled socket, but rejects its
+  // interrupted query. Reissue known read-only queries once; mutation calls
+  // may already have committed when the connection drops and must not repeat.
+  const read = async (text, parameters = []) => {
+    try { return await run(text, parameters); }
+    catch (error) {
+      if (!transientDatabaseError(error)) throw error;
+      await delay(150);
+      return run(text, parameters);
+    }
+  };
+  let nextLoginCleanup = 0;
   try {
     await run(POSTGRES_SCHEMA_SQL);
     const initial = seed ? seedData(now) : {settings: seedData(now).settings};
@@ -238,11 +255,11 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
     async close() { if (close) await close(); else if (sql) await sql.end({timeout: 5}); },
     async list(collection) {
       checkCollection(collection);
-      return (await run('SELECT data FROM potshaven_private.records WHERE collection = $1 ORDER BY sequence', [collection])).map(row => row.data);
+      return (await read('SELECT data FROM potshaven_private.records WHERE collection = $1 ORDER BY sequence', [collection])).map(row => row.data);
     },
     async get(collection, id) {
       checkCollection(collection);
-      return (await run('SELECT data FROM potshaven_private.records WHERE collection = $1 AND id = $2', [collection, id]))[0]?.data;
+      return (await read('SELECT data FROM potshaven_private.records WHERE collection = $1 AND id = $2', [collection, id]))[0]?.data;
     },
     async put(collection, input) {
       checkCollection(collection); checkObject(input);
@@ -251,20 +268,20 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
       validate(collection, record);
       return (await run('INSERT INTO potshaven_private.records(collection, id, data) VALUES ($1, $2, $3::jsonb) ON CONFLICT (collection, id) DO UPDATE SET data = EXCLUDED.data RETURNING data', [collection, record.id, record]))[0].data;
     },
-    async update(collection, id, input, actor = 'Owner') {
+    async update(collection, id, input, actor = 'Owner', options = {}) {
       checkCollection(collection); checkObject(input);
       if (collection === 'stockMovements') throw new AppError('Stock history is managed automatically and cannot be edited.', 403);
       const previous = await store.get(collection, id);
       if (!previous) throw new AppError('Record not found.', 404);
       validate(collection, {...previous, ...input, id});
-      return (await run('SELECT potshaven_private.update_record($1, $2, $3::jsonb, $4, $5, $6, $7) AS data', [collection, id, input, actor, randomUUID(), randomUUID(), new Date().toISOString()]))[0].data;
+      return (await run('SELECT potshaven_private.update_record($1, $2, $3::jsonb, $4, $5, $6, $7, $8::jsonb) AS data', [collection, id, input, actor, randomUUID(), randomUUID(), new Date().toISOString(), options.expected ?? null]))[0].data;
     },
     async remove(collection, id) {
       checkCollection(collection);
       await run('SELECT potshaven_private.remove_record($1, $2)', [collection, id]);
     },
     async settings() {
-      return (await run("SELECT value FROM potshaven_private.metadata WHERE key = 'settings'"))[0]?.value || {};
+      return (await read("SELECT value FROM potshaven_private.metadata WHERE key = 'settings'"))[0]?.value || {};
     },
     async updateSettings(input) {
       const clean = cleanSettings(input);
@@ -279,7 +296,7 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
     async health() {
       // Read each workspace table through the same connection used by real
       // requests, without loading company records or image contents.
-      const row = (await run(`SELECT
+      const row = (await read(`SELECT
         (SELECT jsonb_typeof(value) FROM potshaven_private.metadata WHERE key = 'settings') AS settings_type,
         (SELECT jsonb_typeof(data) FROM potshaven_private.records LIMIT 1) AS record_type,
         (SELECT mime FROM potshaven_private.media LIMIT 1) AS media_type`))[0];
@@ -291,11 +308,34 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
       return true;
     },
     async state() {
-      const row = (await run("SELECT coalesce((SELECT jsonb_object_agg(collection, items) FROM (SELECT collection, jsonb_agg(data ORDER BY sequence) AS items FROM potshaven_private.records GROUP BY collection) grouped), '{}'::jsonb) || jsonb_build_object('settings', coalesce((SELECT value FROM potshaven_private.metadata WHERE key = 'settings'), '{}'::jsonb)) AS state"))[0];
+      const row = (await read("SELECT coalesce((SELECT jsonb_object_agg(collection, items) FROM (SELECT collection, jsonb_agg(data ORDER BY sequence) AS items FROM potshaven_private.records GROUP BY collection) grouped), '{}'::jsonb) || jsonb_build_object('settings', coalesce((SELECT value FROM potshaven_private.metadata WHERE key = 'settings'), '{}'::jsonb)) AS state"))[0];
       return {...Object.fromEntries(collections.map(collection => [collection, []])), ...row.state};
     },
     async getSessionSecret() {
       return (await run("INSERT INTO potshaven_private.metadata(key, value) VALUES ('session-secret', to_jsonb($1::text)) ON CONFLICT (key) DO UPDATE SET value = potshaven_private.metadata.value RETURNING value", [randomBytes(48).toString('hex')]))[0].value;
+    },
+    async recordLoginAttempt(key, accepted, now = Date.now()) {
+      if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key) || typeof accepted !== 'boolean' || !Number.isSafeInteger(now) || now < 0) throw new AppError('Invalid sign-in attempt.');
+      const privateKey = `login-attempt:${key}`;
+      if (now >= nextLoginCleanup) {
+        // Cleanup finishes before the atomic check below, so it never holds
+        // another login key's lock while waiting for this attempt's key.
+        await run("DELETE FROM potshaven_private.metadata WHERE key LIKE 'login-attempt:%' AND (value->>'resetAt')::bigint <= $1", [now]);
+        nextLoginCleanup = now + 15 * 60 * 1000;
+      }
+      const result = await run(`INSERT INTO potshaven_private.metadata(key, value)
+        VALUES ($1, jsonb_build_object('failures', CASE WHEN $2::boolean THEN 0 ELSE 1 END, 'resetAt', CASE WHEN $2::boolean THEN $3::bigint ELSE $3::bigint + 900000 END, 'allowed', true))
+        ON CONFLICT (key) DO UPDATE SET value = CASE
+          WHEN (potshaven_private.metadata.value->>'resetAt')::bigint > $3::bigint AND (potshaven_private.metadata.value->>'failures')::integer >= 10
+            THEN potshaven_private.metadata.value || jsonb_build_object('allowed', false)
+          WHEN $2::boolean
+            THEN jsonb_build_object('failures', 0, 'resetAt', $3::bigint, 'allowed', true)
+          WHEN (potshaven_private.metadata.value->>'resetAt')::bigint > $3::bigint
+            THEN potshaven_private.metadata.value || jsonb_build_object('failures', (potshaven_private.metadata.value->>'failures')::integer + 1, 'allowed', true)
+          ELSE jsonb_build_object('failures', 1, 'resetAt', $3::bigint + 900000, 'allowed', true)
+        END
+        RETURNING (value->>'allowed')::boolean AS allowed`, [privateKey, accepted, now]);
+      return result[0].allowed;
     },
     async putMedia(key, bytes, contentType) {
       if (typeof key !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9/_.-]{0,200}$/.test(key) || key.split('/').includes('..')) throw new AppError('Invalid media name.');
@@ -307,7 +347,7 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
     },
     async getMedia(key) {
       if (typeof key !== 'string' || key.length > 201) return null;
-      const row = (await run('SELECT mime, data FROM potshaven_private.media WHERE key = $1', [key]))[0];
+      const row = (await read('SELECT mime, data FROM potshaven_private.media WHERE key = $1', [key]))[0];
       return row ? {bytes: Buffer.from(row.data, 'base64'), contentType: row.mime} : null;
     },
   };

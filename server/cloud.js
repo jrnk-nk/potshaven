@@ -13,16 +13,24 @@ export function createCloudHandler({env = process.env, connect = createPostgresS
   };
   async function initialise(connectionString) {
     const store = await connect(connectionString, {seed: false});
-    const sessionSecret = await store.getSessionSecret();
-    return createApp({
-      store, serveClient: false, mediaStorage: createMediaStorage(store), sessionSecret,
-      ownerPassword: env.APP_OWNER_PASSWORD, managerPassword: env.APP_MANAGER_PASSWORD,
-      imageKey: env.POTSHAVEN_OPENAI_KEY || env.OPENAI_API_KEY || '',
-      imageModel: env.POTSHAVEN_IMAGE_MODEL || env.OPENAI_IMAGE_MODEL,
-      imageQuality: env.POTSHAVEN_IMAGE_QUALITY || env.OPENAI_IMAGE_QUALITY,
-      imageSize: env.POTSHAVEN_IMAGE_SIZE || env.OPENAI_IMAGE_SIZE,
-      assistantModel: env.POTSHAVEN_ASSISTANT_MODEL,
-    });
+    try {
+      const sessionSecret = await store.getSessionSecret();
+      return createApp({
+        store, serveClient: false, mediaStorage: createMediaStorage(store), sessionSecret,
+        ownerPassword: env.APP_OWNER_PASSWORD, managerPassword: env.APP_MANAGER_PASSWORD,
+        imageKey: env.POTSHAVEN_OPENAI_KEY || env.OPENAI_API_KEY || '',
+        imageModel: env.POTSHAVEN_IMAGE_MODEL || env.OPENAI_IMAGE_MODEL,
+        imageQuality: env.POTSHAVEN_IMAGE_QUALITY || env.OPENAI_IMAGE_QUALITY,
+        imageSize: env.POTSHAVEN_IMAGE_SIZE || env.OPENAI_IMAGE_SIZE,
+        assistantModel: env.POTSHAVEN_ASSISTANT_MODEL,
+      });
+    } catch (error) {
+      // Initialisation can fail after a pool has opened (for example while
+      // reading the shared session secret). Retrying must not leak a pool on
+      // every request and exhaust the Supabase connection limit.
+      try { await store.close?.(); } catch { /* Preserve the original failure. */ }
+      throw error;
+    }
   }
   return async function cloudHandler(req, res) {
     const connectionString = env.DATABASE_URL || env.SUPABASE_DB_URL || env.POSTGRES_URL;

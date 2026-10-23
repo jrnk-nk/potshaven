@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { seedData } from './seed.js';
 import {validateWorkforce} from './workforce-validation.js';
 
@@ -88,10 +89,13 @@ export function createStore(filename = '.data/potshaven.db', { seed = true, now 
       upsert.run(collection, record.id, JSON.stringify(record));
       return record;
     },
-    update(collection, id, input, actor = 'Owner') {
-      const previous = store.get(collection, id);
-      if (!previous) throw new AppError('Record not found.', 404);
+    update(collection, id, input, actor = 'Owner', {expected} = {}) {
       return transaction(() => {
+        const previous = store.get(collection, id);
+        if (!previous) throw new AppError('Record not found.', 404);
+        // Role authorization may have depended on status, type, or private
+        // nested fields. Check its snapshot while the write lock is held.
+        if (expected != null && !isDeepStrictEqual(previous, expected)) throw new AppError('This record changed while you were editing. Refresh and try again.', 409);
         let next = store.put(collection, { ...previous, ...input, id });
         if (collection === 'inventory' && previous.quantity !== next.quantity) {
           const delta = next.quantity - previous.quantity;
@@ -125,6 +129,20 @@ export function createStore(filename = '.data/potshaven.db', { seed = true, now 
       db.prepare('DELETE FROM records WHERE collection = ? AND id = ?').run(collection, id);
     },
     settings() { const row = getMeta.get('settings'); return row ? JSON.parse(row.value) : {}; },
+    recordLoginAttempt(key, accepted, now = Date.now()) {
+      if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key) || typeof accepted !== 'boolean' || !Number.isSafeInteger(now) || now < 0) throw new AppError('Invalid sign-in attempt.');
+      return transaction(() => {
+        db.prepare("DELETE FROM metadata WHERE key LIKE 'login-attempt:%' AND json_extract(value, '$.until') <= ?").run(now);
+        const metadataKey = `login-attempt:${key}`;
+        const row = getMeta.get(metadataKey);
+        const previous = row ? JSON.parse(row.value) : null;
+        const active = previous && previous.until > now;
+        if (active && previous.count >= 10) return false;
+        if (accepted) db.prepare('DELETE FROM metadata WHERE key = ?').run(metadataKey);
+        else setMeta.run(metadataKey, JSON.stringify({count: (active ? previous.count : 0) + 1, until: active ? previous.until : now + 15 * 60 * 1000}));
+        return true;
+      });
+    },
     updateSettings(input) {
       const allowed = ['companyName', 'ownerName', 'tagline', 'email', 'phone', 'currency', 'logo', 'watermark', 'address', 'accentColor'];
       const clean = {};

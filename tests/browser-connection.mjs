@@ -109,6 +109,22 @@ try {
   await malformed.screenshot({path:join(artifacts,'invalid-api-response.png'),fullPage:true});
   console.log('PASS an HTML response with status200 is rejected instead of silently showing an empty workspace');
   await malformed.close();
+
+  const interrupted=await browser.newPage({viewport:{width:390,height:844},reducedMotion:'reduce'});
+  interrupted.on('pageerror',error=>errors.push(error.message));
+  let interruptedRequests=0;
+  await interrupted.route('**/api/state',route=>{
+    interruptedRequests++;
+    if(interruptedRequests<=2)return route.fulfill({status:503,contentType:'application/json',body:'{"error":'});
+    return route.continue();
+  });
+  await interrupted.goto(origin);
+  await expect(interrupted.getByRole('heading',{name:'Your business at a glance',exact:true})).toBeVisible({timeout:25000});
+  assert.ok(interruptedRequests>=3,'A transient failure must still retry when its JSON response is interrupted.');
+  assert.ok(interruptedRequests<10,'Recovery must keep its bounded retry schedule.');
+  await expect(interrupted.locator('.error-panel')).toHaveCount(0);
+  console.log('PASS interrupted temporary server responses recover automatically on mobile');
+  await interrupted.close();
   assert.deepEqual(errors,[],'Connection recovery must not create browser runtime errors.');
   console.log('PASS no browser runtime errors');
 }catch(error){

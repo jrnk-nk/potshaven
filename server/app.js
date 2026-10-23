@@ -116,20 +116,30 @@ export function createApp({
     }
   });
   const failedLogins = new Map();
-  app.post('/api/auth/login', (req, res, next) => {
+  app.post('/api/auth/login', async (req, res, next) => {
     try {
-      const source = req.ip;
-      const record = failedLogins.get(source);
-      if (record && record.until > Date.now() && record.count >= 10) throw new AppError('Too many sign-in attempts. Please try again in 15 minutes.', 429);
       const { role, password } = req.body || {};
       if (!['owner', 'manager'].includes(role)) throw new AppError('Choose owner or manager.');
+      // A manager sign-in must not reset failed owner guesses, and mistakes
+      // signing in to one role must not lock the other role out.
+      const source = createHmac('sha256', sessionSigningKey).update(`login-attempt:${JSON.stringify([req.ip, role])}`).digest('hex');
       const expected = role === 'owner' ? ownerPassword : managerPassword;
-      if (!demoMode && (!expected || !safeEqual(password, expected))) {
-        const previous = record && record.until > Date.now() ? record.count : 0;
-        failedLogins.set(source, { count: previous + 1, until: Date.now() + 15 * 60 * 1000 });
-        throw new AppError('Incorrect password or role is not configured.', 401);
+      const accepted = demoMode || Boolean(expected && safeEqual(password, expected));
+      let allowed;
+      if (typeof store.recordLoginAttempt === 'function') allowed = await store.recordLoginAttempt(source, accepted);
+      else {
+        // Compatibility for injected adapters; the SQLite and hosted stores
+        // persist counters so a cold server instance cannot reset the limit.
+        const now = Date.now(), record = failedLogins.get(source);
+        for (const [key, value] of failedLogins) if (value.until <= now) failedLogins.delete(key);
+        const active = record && record.until > now;
+        allowed = !(active && record.count >= 10);
+        if (allowed && !accepted && !active && failedLogins.size >= 10000) allowed = false;
+        if (allowed && accepted) failedLogins.delete(source);
+        else if (allowed) failedLogins.set(source, {count: (active ? record.count : 0) + 1, until: active ? record.until : now + 15 * 60 * 1000});
       }
-      failedLogins.delete(source);
+      if (!allowed) throw new AppError('Too many sign-in attempts. Please try again in 15 minutes.', 429);
+      if (!accepted) throw new AppError('Incorrect password or role is not configured.', 401);
       const payload = Buffer.from(JSON.stringify({ role, expires: Date.now() + 12 * 60 * 60 * 1000 })).toString('base64url');
       res.cookie('potshaven_session', `${payload}.${sign(payload)}`, { httpOnly: true, sameSite: 'strict', secure: req.secure || req.headers['x-forwarded-proto'] === 'https', maxAge: 12 * 60 * 60 * 1000 });
       res.json({ role, demoMode });
@@ -314,7 +324,7 @@ export function createApp({
       const existing = await store.get(req.params.collection, req.params.id);
       const payload = await checkedPayload(req, req.params.collection, 'update', existing);
       authorizePurchase(req, existing);
-      const record = await store.update(req.params.collection, req.params.id, await pictures(payload), req.role === 'owner' ? 'Owner' : 'Manager');
+      const record = await store.update(req.params.collection, req.params.id, await pictures(payload), req.role === 'owner' ? 'Owner' : 'Manager', req.role === 'manager' ? {expected: existing} : undefined);
       res.json(await pictures(recordForRole(req.params.collection, record, req.role)));
     } catch (error) { next(error); }
   });

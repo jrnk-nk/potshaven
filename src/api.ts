@@ -9,6 +9,7 @@ export class ApiError extends Error {
   }
 }
 const setupCodes = new Set(['DATABASE_NOT_CONFIGURED', 'AUTH_NOT_CONFIGURED', 'SESSION_NOT_CONFIGURED', 'CONFIGURATION_REQUIRED']);
+const retryableStatuses = new Set([408,425,429,500,502,503,504]);
 export async function api(path: string, options: RequestInit = {}) {
   const read = !options.method || options.method.toUpperCase() === 'GET';
   const controller = new AbortController();
@@ -27,16 +28,21 @@ export async function api(path: string, options: RequestInit = {}) {
     if (response.status === 204) return null;
     const json = /\bjson\b/i.test(response.headers.get('content-type') || '');
     if (!json) {
-      throw new ApiError('The workspace API returned a web page instead of data. Deploy the included backend routes alongside the app.', {status: response.status, code: 'INVALID_API_RESPONSE', retryable:[502,503,504].includes(response.status)});
+      throw new ApiError('The workspace API returned a web page instead of data. Deploy the included backend routes alongside the app.', {status: response.status, code: 'INVALID_API_RESPONSE', retryable:retryableStatuses.has(response.status)});
     }
     let result: any;
     try { result = await response.json(); }
-    catch { throw new ApiError('The workspace server returned an unreadable response. Please try again.', {status:response.status, code:'INVALID_API_RESPONSE'}); }
+    catch (error) {
+      // Headers can arrive before a slow or interrupted body. Preserve that
+      // connection failure so the workspace can recover automatically.
+      if(controller.signal.aborted || !(error instanceof SyntaxError))throw error;
+      throw new ApiError('The workspace server returned an unreadable response. Please try again.', {status:response.status, code:'INVALID_API_RESPONSE',retryable:retryableStatuses.has(response.status)});
+    }
     if (!response.ok) {
       const code = typeof result?.code === 'string' ? result.code : '';
       const setup = setupCodes.has(code);
       const message = typeof result?.error === 'string' ? result.error : typeof result?.message === 'string' ? result.message : 'The server could not complete this request.';
-      throw new ApiError(message, {status:response.status, code, setup, retryable:!setup && [408,425,429,500,502,503,504].includes(response.status)});
+      throw new ApiError(message, {status:response.status, code, setup, retryable:!setup && retryableStatuses.has(response.status)});
     }
     return result;
   } catch (error) {

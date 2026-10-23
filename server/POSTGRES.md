@@ -8,6 +8,8 @@ Set `DATABASE_URL` privately on the server to the Supabase **transaction pooler*
 
 The `postgres` driver enables certificate and hostname verification, disables prepared statements for the transaction pooler, limits each function instance to one connection, and closes idle connections after twenty seconds. For Supabase database hosts, it supplements Node's default trust store with both official production database CA certificates from the [Supabase CLI](https://github.com/supabase/cli/tree/37e309e8ed628091c9e4624ac13adf8c8769e51f/apps/cli-go/internal/gen/types/templates), supporting the 2021/2025 certificate rotation. Other database hosts retain Node's default trust store. No database password, connection string, or session secret is returned in workspace state. The HTTP API applies owner/manager authentication and role-based field/collection/media authorization; a browser Supabase anonymous key is not used to query company records.
 
+Known read-only operations retry one transient connection failure after 150 ms, allowing the driver to reconnect a stale pool socket. Authentication, TLS, SQL and schema errors are not retried. Mutations, including SQL functions called with `SELECT`, are never replayed: a lost response may follow a committed stock deduction. Failed cloud initialization closes its pool before the next attempt. A sustained outage still returns a safe 503; these safeguards do not guarantee provider availability.
+
 JSONB parameters use native JavaScript objects because the production driver serializes them automatically. Pre-stringifying them would encode them twice, causing record inserts to fail and settings updates to become arrays. Regression tests apply the actual driver's JSONB serializer before executing SQL, covering the behavior that direct PGlite calls alone do not reproduce.
 
 On startup, the adapter repairs legacy settings made from objects and encoded object patches. It merges patches in order and atomically retains the exact original value in private metadata under `settings-before-json-parameter-fix`. Valid settings, business records, and existing session secrets remain unchanged. Unrecognized data is preserved and reported as an initialization error instead of being discarded.
@@ -17,7 +19,7 @@ The adapter creates its schema on first connection. There is no manual SQL-edito
 ## Stored objects
 
 - `potshaven_private.records`: collection/id keyed JSONB records, with stable insertion ordering.
-- `potshaven_private.metadata`: company settings, schema/initialization markers, and a random private session-signing secret.
+- `potshaven_private.metadata`: company settings, schema/initialization markers, a random private session-signing secret, and expiring sign-in attempt counters.
 - `potshaven_private.media`: immutable image bytes and their MIME types. Workspace records reference `/media/...` URLs, so photos are not repeatedly embedded in every state response.
 - Private functions implement stock deductions, inventory adjustments, recurring-job completion, linked-record removal, initialization, and calendar arithmetic.
 
@@ -30,6 +32,10 @@ A stock operation is a single PostgreSQL function call. It locks the inventory r
 Recurring-job completion locks the parent job, writes the completed state and a clean follow-up in one transaction, and records the child's id. A unique partial index on `previousJobId` provides an additional guard against duplicate follow-ups. Weekly, fortnightly, monthly, and quarterly schedules retain the original calendar anchor; invalid dates roll completion back.
 
 Database settings are merged atomically. Media keys are immutable: storing the same key with identical bytes is harmless; using it for different bytes returns a conflict. A persisted random signing secret keeps valid sessions usable across cold starts; changing role passwords still invalidates old sessions in the authentication layer.
+
+`update(collection, id, patch, actor, {expected})` optionally compares the complete authorized snapshot under the record's `FOR UPDATE` lock and returns 409 if anything changed. The API requires this check for manager updates, protecting owner approvals, project deadlines and private nested fields from delayed manager writes. The schema upgrade adds an eight-argument function without deleting the prior overload, so existing function instances can finish during deployment.
+
+`recordLoginAttempt(key, accepted, now)` atomically checks and updates the sign-in limit in private metadata. A session-key HMAC scopes counters to role and request source without storing raw IP addresses or passwords. Counters survive independent Vercel instances and cold starts, block further attempts after ten failures in a 15-minute window, and reset on an accepted sign-in only when the counter is not blocked. Expired counters are cleaned up. A failed counter write is not retried or treated as a successful login.
 
 ## Interface and verification
 

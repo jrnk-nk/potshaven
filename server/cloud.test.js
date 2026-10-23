@@ -52,6 +52,25 @@ test('failed Supabase initialization is safely retryable without leaking a conne
  }finally{await server.close();}
 });
 
+test('failed session initialization closes its pool and the next request can recover',async()=>{
+ let connections=0,closed=0;
+ const failure=Object.assign(new Error('private connection details'),{code:'CONNECTION_CLOSED'});
+ const server=await serve(createCloudHandler({env,connect:async()=>{
+  connections++;
+  if(connections===1)return {getSessionSecret:async()=>{throw failure;},close:async()=>{closed++;throw new Error('private cleanup details');}};
+  return {getSessionSecret:async()=> 'stable-test-session-secret',health:async()=>true,putMedia:async()=>{},getMedia:async()=>null,close:async()=>{closed++;}};
+ }}));
+ try{
+  const failed=await fetch(server.url+'/api/health');
+  assert.equal(failed.status,503);
+  const body=await failed.text();assert.equal(JSON.parse(body).diagnostic,'DATABASE_CONNECTION_LOST');assert.ok(!body.includes('private'));
+  assert.equal(closed,1,'failed initialization must release its pool even when cleanup rejects');
+  const recovered=await fetch(server.url+'/api/health');assert.equal(recovered.status,200);assert.equal((await recovered.json()).database,'connected');
+  const warm=await fetch(server.url+'/api/health');assert.equal(warm.status,200);
+  assert.equal(connections,2,'the recovered app must be reused');assert.equal(closed,1,'a healthy pool must remain open');
+ }finally{await server.close();}
+});
+
 test('database failures explain the corrective action without disclosing provider errors or credentials',async()=>{
  const privateDetail=`provider details: ${env.DATABASE_URL} secret-owner=${env.APP_OWNER_PASSWORD}`;
  const cases=[
@@ -59,6 +78,7 @@ test('database failures explain the corrective action without disclosing provide
   ['XX000',`Tenant or user not found; ${privateDetail}`,'POOLER_PROJECT_NOT_FOUND',/pooler|project|username/i],
   ['ENOTFOUND',privateDetail,'DATABASE_HOST_NOT_FOUND',/host|address/i],
   ['CONNECT_TIMEOUT',privateDetail,'DATABASE_CONNECTION_TIMEOUT',/active|network|pooler/i],
+  ['53300',privateDetail,'DATABASE_CAPACITY_LIMIT',/limit|capacity/i],
   ['SELF_SIGNED_CERT_IN_CHAIN',privateDetail,'DATABASE_TLS_ERROR',/certificate/i],
   ['42501',privateDetail,'DATABASE_ACCESS_DENIED',/permission|access|user/i],
   ['42601',privateDetail,'DATABASE_INITIALIZATION_FAILED',/initializ|setup/i],

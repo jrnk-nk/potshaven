@@ -21,6 +21,7 @@ export function createCloudHandler({env = process.env, connect = createPostgresS
       imageModel: env.POTSHAVEN_IMAGE_MODEL || env.OPENAI_IMAGE_MODEL,
       imageQuality: env.POTSHAVEN_IMAGE_QUALITY || env.OPENAI_IMAGE_QUALITY,
       imageSize: env.POTSHAVEN_IMAGE_SIZE || env.OPENAI_IMAGE_SIZE,
+      assistantModel: env.POTSHAVEN_ASSISTANT_MODEL,
     });
   }
   return async function cloudHandler(req, res) {

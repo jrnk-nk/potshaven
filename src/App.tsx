@@ -1,5 +1,6 @@
-import React,{lazy,Suspense,useEffect,useState} from 'react';
+import React,{lazy,Suspense,useEffect,useRef,useState} from 'react';
 import './connection.css';
+import './mobile.css';
 import {BRAND_NAME,BRAND_LOGO,BRAND_LOGO_PREVIEW} from './branding';
 import {useApp,money,today} from './state';
 import {Icon,Modal,Field,initials} from './ui';
@@ -13,6 +14,7 @@ const JobForm=lazy(()=>operations().then(module=>({default:module.JobForm})));
 const InventoryPage=lazy(()=>import('./pages/Inventory').then(module=>({default:module.InventoryPage})));
 const BusinessPage=lazy(()=>import('./pages/Business').then(module=>({default:module.BusinessPage})));
 const StudioPage=lazy(()=>studio().then(module=>({default:module.StudioPage})));
+const CompanyAssistant=lazy(()=>import('./pages/Assistant'));
 const PortfolioPage=lazy(()=>studio().then(module=>({default:module.PortfolioPage})));
 const SettingsPage=lazy(()=>studio().then(module=>({default:module.SettingsPage})));
 import Dashboard from './pages/Dashboard';
@@ -22,6 +24,7 @@ const nav=[
  {key:'places',label:'Places',icon:'MapPin'},
  {key:'inventory',label:'Inventory',icon:'Sprout'},
  {key:'studio',label:'Design studio',icon:'WandSparkles'},
+ {key:'assistant',label:'Company assistant',icon:'MessageCircle'},
  {key:'projects',label:'Projects',icon:'FolderKanban'},
  {key:'team',label:'Team & vehicles',icon:'UsersRound'},
  {key:'business',label:'Business',icon:'ChartNoAxesCombined'},
@@ -30,11 +33,35 @@ const nav=[
 export default function App(){
  const {data,loading,refreshing,error,errorCode,connection,hasData,authenticated,refresh,notify,toast}=useApp();
  const [page,setPage]=useState(location.hash.slice(1)||'overview'),[mobile,setMobile]=useState(false),[search,setSearch]=useState(''),[notifications,setNotifications]=useState(false),[newJob,setNewJob]=useState<string|boolean>(false),[help,setHelp]=useState(false),[more,setMore]=useState(nav.findIndex(n=>n.key===(location.hash.slice(1)||'overview'))>4);
+ const sidebarRef=useRef<HTMLElement>(null),notificationRef=useRef<HTMLDivElement>(null);
  const go=(key:string)=>{location.hash=key;setPage(key);setMobile(false);setSearch('');setNotifications(false);setMore(nav.findIndex(n=>n.key===key)>4);};
  useEffect(()=>{if(nav.findIndex(n=>n.key===page)>4)setMore(true);},[page]);
- useEffect(()=>{const onHash=()=>setPage(location.hash.slice(1)||'overview');const onJob=(e:Event)=>setNewJob((e as CustomEvent).detail||true);window.addEventListener('hashchange',onHash);window.addEventListener('potshaven:job',onJob);return()=>{window.removeEventListener('hashchange',onHash);window.removeEventListener('potshaven:job',onJob);};},[]);
+ useEffect(()=>{const onHash=()=>{setPage(location.hash.slice(1)||'overview');setMobile(false);setNotifications(false);};const onJob=(e:Event)=>setNewJob((e as CustomEvent).detail||true);window.addEventListener('hashchange',onHash);window.addEventListener('potshaven:job',onJob);return()=>{window.removeEventListener('hashchange',onHash);window.removeEventListener('potshaven:job',onJob);};},[]);
  useEffect(()=>{const color=data.settings.accentColor;if(/^#[0-9a-f]{6}$/i.test(color||'')){document.documentElement.style.setProperty('--green',color);document.documentElement.style.setProperty('--green-dark',color);}else{document.documentElement.style.removeProperty('--green');document.documentElement.style.removeProperty('--green-dark');}},[data.settings.accentColor]);
  useEffect(()=>{document.title=`${data.settings.companyName||'PotsHaven'} · ${nav.find(n=>n.key===page)?.label||'Settings'}`;},[page,data.settings]);
+ useEffect(()=>{
+  if(!mobile)return;
+  const previous=document.activeElement as HTMLElement|null,overflow=document.body.style.overflow;
+  document.body.style.overflow='hidden';
+  sidebarRef.current?.querySelector<HTMLElement>('.drawer-close')?.focus();
+  const keyboard=(event:KeyboardEvent)=>{
+   if(event.key==='Escape')setMobile(false);
+   if(event.key!=='Tab')return;
+   const items=[...(sidebarRef.current?.querySelectorAll<HTMLElement>('a[href],button:not(:disabled)')||[])].filter(item=>item.offsetParent!==null);
+   const first=items[0],last=items.at(-1);
+   if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
+   else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
+  };
+  document.addEventListener('keydown',keyboard);
+  return()=>{document.body.style.overflow=overflow;document.removeEventListener('keydown',keyboard);previous?.focus();};
+ },[mobile]);
+ useEffect(()=>{
+  if(!notifications)return;
+  const close=(event:PointerEvent)=>{if(!notificationRef.current?.contains(event.target as Node))setNotifications(false);};
+  const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){setNotifications(false);notificationRef.current?.querySelector<HTMLButtonElement>('.notification-button')?.focus();}};
+  document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);
+  return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape);};
+ },[notifications]);
  const low=data.inventory.filter(i=>Number(i.quantity)<=Number(i.minStock));
  const due=data.jobs.filter(j=>j.status!=='Completed'&&(j.deadline||j.date)<today());
  const soon = new Date(Date.now()+2*86400000).toISOString().slice(0,10);
@@ -50,18 +77,18 @@ export default function App(){
  ...data.inventory.filter(i=>i.name.toLowerCase().includes(search.toLowerCase())).map(i=>({title:i.name,subtitle:'Inventory · '+i.quantity+' available',page:'inventory',icon:'Sprout'}))].slice(0,7):[];
  return <div className="app-shell">
  {mobile&&<button className="sidebar-overlay" aria-label="Close menu" onClick={()=>setMobile(false)}/>}
- <aside className={`sidebar ${mobile?'sidebar-open':''}`}><a className="brand-link" href="#overview" onClick={()=>go('overview')}><Brand name={data.settings.companyName} logo={data.settings.logo}/></a><div className="workspace-label">EVERYDAY</div>
+ <aside id="workspace-menu" ref={sidebarRef} className={`sidebar ${mobile?'sidebar-open':''}`} role={mobile?'dialog':undefined} aria-modal={mobile?true:undefined} aria-label={mobile?'Workspace menu':undefined}><button type="button" className="icon-button drawer-close" aria-label="Close workspace menu" onClick={()=>setMobile(false)}><Icon name="X"/></button><a className="brand-link" href="#overview" onClick={()=>go('overview')}><Brand name={data.settings.companyName} logo={data.settings.logo}/></a><div className="workspace-label">EVERYDAY</div>
  <nav aria-label="Main navigation">
  {nav.slice(0,5).map(n=><button key={n.key} className={`nav-item ${page===n.key?'active':''}`} aria-current={page===n.key?'page':undefined} onClick={()=>go(n.key)}><Icon name={n.icon} size={20}/><span>{n.label}</span></button>)}
  <button className={`nav-item more-tools-button ${more?'expanded':''}`} aria-expanded={more} aria-controls="extra-tools" onClick={()=>setMore(!more)}><Icon name="FolderOpen" size={20}/><span>More tools</span><Icon name="ChevronDown" size={15}/></button>
  <div id="extra-tools" className="extra-tools" hidden={!more}>{nav.slice(5).map(n=><button key={n.key} className={`nav-item ${page===n.key?'active':''}`} aria-current={page===n.key?'page':undefined} onClick={()=>go(n.key)}><Icon name={n.icon} size={18}/><span>{n.label}</span></button>)}</div>
  </nav>
- <div className="sidebar-bottom"><button className="help-link" onClick={()=>setHelp(true)}><Icon name="CircleHelp" size={17}/> How to use this app</button><button className={`nav-item ${page==='settings'?'active':''}`} onClick={()=>go('settings')}><Icon name="Settings2"/><span>Settings & branding</span></button><button className="sidebar-account" onClick={()=>go('settings')}><div className="avatar owner-avatar">{initials(data.settings.ownerName||'Business Owner')}</div><div><strong>{data.settings.ownerName||'Your workspace'}</strong><span>{data.role==='manager'?'Manager':'Business owner'}</span></div><Icon name="ChevronDown" size={15}/></button></div></aside>
- <div className="workspace"><header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" aria-label="Open menu" onClick={()=>setMobile(true)}><Icon name="Menu"/></button><strong>{nav.find(n=>n.key===page)?.label||'Settings & branding'}</strong></div><div className="topbar-actions"><div className="global-search"><Icon name="Search" size={16}/><input aria-label="Search workspace" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Find anything…"/>{search&&<div className="search-results">{results.length?results.map((r,i)=><button key={i} onClick={()=>go(r.page)}><Icon name={r.icon}/><span><strong>{r.title}</strong><small>{r.subtitle}</small></span><Icon name="ArrowUpRight" size={14}/></button>):<p>No matches. Try a place, job, or plant.</p>}</div>}</div><span className="topbar-divider"/><div className="notifications-wrap"><button className="icon-button notification-button" aria-label={`Notifications, ${alerts.length} alerts`} onClick={()=>setNotifications(!notifications)}><Icon name="Bell"/>{alerts.length>0&&<i/>}</button>{notifications&&<div className="notification-popover"><div className="popover-heading"><strong>A little attention</strong><span>{alerts.length} alerts</span></div>{alerts.length?alerts.map((a,i)=><button key={i} onClick={()=>{go(a.page);setNotifications(false);}}><span className="notice-icon"><Icon name={a.icon}/></span><span><strong>{a.title}</strong><small>{a.detail}</small></span><Icon name="ChevronRight" size={14}/></button>):<p>Everything is up to date.</p>}</div>}</div><button className="avatar top-avatar" aria-label="Open account settings" onClick={()=>go('settings')}>{initials(data.settings.ownerName||'Business Owner')}</button></div></header>
+ <div className="sidebar-bottom"><button className="help-link" onClick={()=>{setMobile(false);setHelp(true);}}><Icon name="CircleHelp" size={17}/> How to use this app</button><button className={`nav-item ${page==='settings'?'active':''}`} onClick={()=>go('settings')}><Icon name="Settings2"/><span>Settings & branding</span></button><button className="sidebar-account" onClick={()=>go('settings')}><div className="avatar owner-avatar">{initials(data.settings.ownerName||'Business Owner')}</div><div><strong>{data.settings.ownerName||'Your workspace'}</strong><span>{data.role==='manager'?'Manager':'Business owner'}</span></div><Icon name="ChevronDown" size={15}/></button></div></aside>
+ <div className={`workspace${page==='studio'?' studio-workspace':page==='assistant'?' assistant-workspace':''}`}><header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" aria-label="Open menu" aria-expanded={mobile} aria-controls="workspace-menu" onClick={()=>{setNotifications(false);setMobile(true);}}><Icon name="Menu"/></button><strong>{nav.find(n=>n.key===page)?.label||'Settings & branding'}</strong>{(page==='studio'||page==='assistant')&&<a className="mobile-studio-brand" href="#overview" aria-label="Go to home" onClick={()=>go('overview')}><Brand name={data.settings.companyName} logo={data.settings.logo}/></a>}</div><div className="topbar-actions"><div className="global-search"><Icon name="Search" size={16}/><input aria-label="Search workspace" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Find anything…"/>{search&&<div className="search-results">{results.length?results.map((r,i)=><button key={i} onClick={()=>go(r.page)}><Icon name={r.icon}/><span><strong>{r.title}</strong><small>{r.subtitle}</small></span><Icon name="ArrowUpRight" size={14}/></button>):<p>No matches. Try a place, job, or plant.</p>}</div>}</div><span className="topbar-divider"/><div className="notifications-wrap" ref={notificationRef}><button className="icon-button notification-button" aria-expanded={notifications} aria-controls="workspace-alerts" aria-label={`Notifications, ${alerts.length} alerts`} onClick={()=>setNotifications(!notifications)}><Icon name="Bell"/>{alerts.length>0&&<i/>}</button>{notifications&&<div className="notification-popover" id="workspace-alerts"><div className="popover-heading"><strong>A little attention</strong><span>{alerts.length} alerts</span><button type="button" className="icon-button" aria-label="Close alerts" onClick={()=>setNotifications(false)}><Icon name="X" size={16}/></button></div>{alerts.length?alerts.map((a,i)=><button key={i} onClick={()=>{go(a.page);setNotifications(false);}}><span className="notice-icon"><Icon name={a.icon}/></span><span><strong>{a.title}</strong><small>{a.detail}</small></span><Icon name="ChevronRight" size={14}/></button>):<p>Everything is up to date.</p>}</div>}</div><button className="avatar top-avatar" aria-label="Open account settings" onClick={()=>go('settings')}>{initials(data.settings.ownerName||'Business Owner')}</button></div></header>
  {data.demoMode&&<div className="demo-banner"><span><span className="demo-dot"/>Demo workspace <span className="demo-detail">· Sample records to help you explore</span></span><button onClick={()=>go('settings')}>Make it yours <Icon name="ArrowUpRight" size={13}/></button></div>}
  {error&&hasData&&<div className="connection-banner" data-testid="connection-status" role="status"><Icon name="WifiOff" size={18}/><div><strong>Connection lost. Showing last loaded data.</strong><span>{refreshing?'Reconnecting…':error}</span></div><button className="btn btn-secondary btn-sm" onClick={()=>void refresh()} disabled={refreshing}>{refreshing?'Reconnecting…':'Try again'}</button></div>}
  <main className="main-content">{error&&!hasData?<div className="panel error-panel"><Icon name="WifiOff"/><h2>Your workspace isn’t connected yet</h2><p>{error}</p><button className="btn btn-primary" onClick={()=>void refresh()} disabled={refreshing}>{refreshing?'Reconnecting…':'Try again'}</button></div>:<ScreenBoundary key={page}><Suspense fallback={<PageLoading/>}>
- {page==='overview'&&<Dashboard go={go} onAdd={()=>setNewJob(true)}/>}{page==='schedule'&&<SchedulePage/>}{page==='projects'&&<ProjectsPage/>}{page==='places'&&<PlacesPage/>}{page==='team'&&<TeamPage/>}{page==='inventory'&&<InventoryPage/>}{page==='business'&&<BusinessPage/>}{page==='studio'&&<StudioPage/>}{page==='portfolio'&&<PortfolioPage/>}{page==='settings'&&<SettingsPage/>}{!nav.some(n=>n.key===page)&&page!=='settings'&&<Dashboard go={go} onAdd={()=>setNewJob(true)}/>}</Suspense></ScreenBoundary>}</main>
+ {page==='overview'&&<Dashboard go={go} onAdd={()=>setNewJob(true)}/>}{page==='schedule'&&<SchedulePage/>}{page==='projects'&&<ProjectsPage/>}{page==='places'&&<PlacesPage/>}{page==='team'&&<TeamPage/>}{page==='inventory'&&<InventoryPage/>}{page==='business'&&<BusinessPage/>}{page==='studio'&&<StudioPage/>}{page==='assistant'&&<CompanyAssistant/>}{page==='portfolio'&&<PortfolioPage/>}{page==='settings'&&<SettingsPage/>}{!nav.some(n=>n.key===page)&&page!=='settings'&&<Dashboard go={go} onAdd={()=>setNewJob(true)}/>}</Suspense></ScreenBoundary>}</main>
  <footer className="workspace-footer"><span>Your company. All in one place.</span><span><Icon name="Sprout" size={13}/> {data.settings.companyName||'PotsHaven'} Workspace</span></footer></div>
  <nav className="mobile-bottom-nav" aria-label="Everyday navigation">{nav.slice(0,5).map(n=><button key={n.key} className={page===n.key?'active':''} aria-current={page===n.key?'page':undefined} onClick={()=>go(n.key)}><Icon name={n.icon} size={19}/><span>{n.key==='studio'?'Designs':n.label}</span></button>)}</nav>
  {toast&&<div className="toast" role="status"><Icon name="CircleCheck"/>{toast}<button aria-label="Dismiss notification" onClick={()=>notify('')}><Icon name="X" size={15}/></button></div>}

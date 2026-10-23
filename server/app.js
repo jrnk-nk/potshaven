@@ -7,6 +7,7 @@ import { fetch, EnvHttpProxyAgent } from 'undici';
 import { createStore, collections, AppError } from './store.js';
 import {decodeDesignReference, referenceUploads, instructionHistory, conversationPrompt} from './design-conversation.js';
 import {databaseFailure} from './database-diagnostics.js';
+import {installAssistant} from './assistant.js';
 
 const safeEqual = (left, right) => {
   const a = Buffer.from(String(left || '')), b = Buffer.from(String(right || ''));
@@ -21,7 +22,7 @@ export function createApp({
   imageModel = process.env.POTSHAVEN_IMAGE_MODEL || process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.5-sunburst',
   imageQuality = process.env.POTSHAVEN_IMAGE_QUALITY || process.env.OPENAI_IMAGE_QUALITY || (/sunburst|flare/i.test(imageModel) ? 'max' : 'high'),
   imageSize = process.env.POTSHAVEN_IMAGE_SIZE || process.env.OPENAI_IMAGE_SIZE || (/sunburst|flare/i.test(imageModel) ? '2560x1440' : '1536x1024'),
-  fetchImage = fetch, sessionSecret = process.env.APP_SESSION_SECRET, mediaStorage,
+  fetchImage = fetch, fetchAssistant = fetch, assistantModel = process.env.POTSHAVEN_ASSISTANT_MODEL || 'gpt-5.4', sessionSecret = process.env.APP_SESSION_SECRET, mediaStorage,
 } = {}) {
   store ||= createStore(join(dataDir, 'potshaven.db'));
   const app = express();
@@ -108,7 +109,7 @@ export function createApp({
       // real read on every request; never return company data from this route.
       if (typeof store.health === 'function') await store.health();
       else await store.settings();
-      res.json({ ok: true, database: 'connected', demoMode, authenticated: Boolean(req.role), role: req.role, imageGenerationConfigured: Boolean(imageKey), imageModel, imageQuality, imageSize });
+      res.json({ ok: true, database: 'connected', demoMode, authenticated: Boolean(req.role), role: req.role, imageGenerationConfigured: Boolean(imageKey), assistantConfigured: Boolean(imageKey), imageModel, imageQuality, imageSize });
     } catch (error) {
       res.status(503).json(databaseFailure(error));
     }
@@ -135,8 +136,9 @@ export function createApp({
   });
   app.post('/api/auth/logout', (req, res) => { res.clearCookie('potshaven_session'); res.json({ ok: true }); });
   app.use('/api', (req, res, next) => req.role ? next() : next(new AppError('Please sign in to continue.', 401)));
+  installAssistant(app, {store, key: imageKey, model: assistantModel, fetchAssistant});
   app.get('/api/state', async (req, res, next) => {
-    try { res.json(await pictures({ ...await store.state(), role: req.role, demoMode, imageGenerationConfigured: Boolean(imageKey), imageModel, imageQuality, imageSize })); }
+    try { res.json(await pictures({ ...await store.state(), role: req.role, demoMode, imageGenerationConfigured: Boolean(imageKey), assistantConfigured: Boolean(imageKey), imageModel, imageQuality, imageSize })); }
     catch (error) { next(error); }
   });
   app.patch('/api/settings', async (req, res, next) => {

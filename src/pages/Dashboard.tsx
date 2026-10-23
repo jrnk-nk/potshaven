@@ -1,5 +1,6 @@
 import {useApp,today} from '../state';
 import {Icon,Status} from '../ui';
+import './Dashboard.css';
 
 export default function Dashboard({go,onAdd}:{go:(page:string)=>void;onAdd:()=>void}){
  const {data,openJob}=useApp();
@@ -17,6 +18,7 @@ export default function Dashboard({go,onAdd}:{go:(page:string)=>void;onAdd:()=>v
    <button onClick={()=>go('inventory')}><span className="shortcut-icon shortcut-sage"><Icon name="Sprout" size={24}/></span><span><strong>Check your plants</strong><small>See stock or record plants used</small></span><Icon name="ArrowRight" size={18}/></button>
    <button onClick={()=>go('studio')}><span className="shortcut-icon shortcut-sand"><Icon name="WandSparkles" size={24}/></span><span><strong>Create a design</strong><small>Start with a photo of the space</small></span><Icon name="ArrowRight" size={18}/></button>
   </section>
+  <button className="home-assistant-entry" onClick={()=>go('assistant')}><span className="shortcut-icon"><Icon name="MessageCircle" size={22}/></span><span><strong>Your company assistant</strong><small>Ask what needs attention, plan a job, or assign your team.</small></span><Icon name="ArrowRight" size={18}/></button>
   <div className="home-layout">
    <section className="panel home-jobs"><div className="panel-heading"><div><h2>Today’s jobs <span className="home-count">{jobs.length}</span></h2><p>{jobs.length?`${completed} of ${jobs.length} completed`:'Your schedule is clear today.'}</p></div><button className="text-link" onClick={()=>go('schedule')}>See schedule <Icon name="ArrowRight" size={16}/></button></div>
     <div className="simple-job-list">{jobs.length?jobs.map(job=>{const place=data.places.find(p=>p.id===job.placeId);const crew=data.workers.filter(w=>job.crewIds?.includes(w.id));return <button className="simple-job" key={job.id} onClick={()=>openJob(job.id)}><span className="simple-job-time">{job.time||'09:00'}</span><span className="simple-job-photo"><img src={place?.image||'/images/place-1.svg'} alt=""/></span><span className="simple-job-info"><strong>{place?.name||job.title}</strong><span>{job.title}</span><small>{crew.length?crew.map(w=>w.name.split(' ')[0]).join(' & '):'Assign a crew'}</small></span><Status>{job.status}</Status><Icon name="ChevronRight" size={17}/></button>}):<div className="empty-state"><Icon name="CalendarDays" size={31}/><h3>Ready when you are</h3><p>Add a job to give your team a plan.</p><button className="btn btn-secondary" onClick={onAdd}>Add your first job</button></div>}</div>

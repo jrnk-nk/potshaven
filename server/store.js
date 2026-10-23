@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { seedData } from './seed.js';
+import {validateWorkforce} from './workforce-validation.js';
 
 export const collections = ['places', 'jobs', 'inventory', 'stockMovements', 'workers', 'vehicles', 'contracts', 'payments', 'expenses', 'purchaseRequests', 'equipment', 'issues', 'careGuides', 'designs'];
 export class AppError extends Error {
@@ -45,6 +46,7 @@ function nonnegative(value, name) {
 export function validate(collection, record) {
   if (!collections.includes(collection)) throw new AppError('Unknown record type.', 404);
   if (!record || Array.isArray(record) || typeof record !== 'object') throw new AppError('A record object is required.');
+  validateWorkforce(collection, record, AppError);
   if (JSON.stringify(record).length > 12000000) throw new AppError('Record is too large.', 413);
   const required = { places: ['name'], jobs: ['title'], inventory: ['name'], workers: ['name'], vehicles: ['name'], contracts: ['title'], payments: ['description'], expenses: ['description'], purchaseRequests: ['title'], equipment: ['name'], issues: ['title'], careGuides: ['name'], designs: ['title'] };
   for (const name of required[collection] || []) text(record[name], name, true);

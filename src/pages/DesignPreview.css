@@ -1,0 +1,17 @@
+.dp-dialog {border: 1px solid #dce5d5;border-radius: 20px;padding: 0;background: #fffefa;color: #304b3b;width: min(1240px, calc(100vw - 48px));max-width: none;max-height: calc(100dvh - 40px);overflow: auto;box-shadow: 0 20px 100px #162b3533;}
+.dp-dialog::backdrop {background: #13291ee0;backdrop-filter: blur(5px);}
+.dp-panel {padding: 22px;}
+.dp-panel header {display: flex;justify-content: space-between;align-items: center;gap: 14px;}
+.dp-panel header span {font-size: 9px;letter-spacing: 1.5px;color: #71816b;}
+.dp-panel h2 {font-family: var(--font-display);font-weight: 400;font-size: 29px;margin: 5px 0 0;}
+.dp-panel header button {width: 44px;height: 44px;display: grid;place-items: center;border: 1px solid #dde5d6;border-radius: 50%;background: #f3f6ed;color: #39573f;cursor: pointer;}
+.dp-tabs {display: flex;justify-content: center;gap: 4px;margin: 16px auto 20px;padding: 4px;background: #edf2e7;border-radius: 12px;width: fit-content;}
+.dp-tabs button {display: flex;align-items: center;gap: 7px;min-height: 44px;border: 0;border-radius: 9px;background: transparent;padding: 10px 16px;font: inherit;font-size: 13px;color: #65765b;cursor: pointer;}
+.dp-tabs button[aria-pressed=true] {background: #fffefa;color: #315b43;box-shadow: 0 2px 8px #253a1c0a;}
+.dp-images {display: grid;grid-template-columns: minmax(0,1fr);gap: 16px;margin-top: 18px;}
+.dp-images.dp-compare {grid-template-columns: repeat(2,minmax(0,1fr));}
+.dp-images figure {margin: 0;min-width: 0;background: #eff2e9;border: 1px solid #e1e7d9;border-radius: 12px;overflow: hidden;}
+.dp-images figcaption {padding: 13px 15px;font-size: 10px;font-weight: 600;letter-spacing: 1px;color: #52664b;background: #f9fbf5;}
+.dp-images img {display: block;width: 100%;height: min(61dvh,650px);object-fit: contain;}
+.dp-dialog button:focus-visible {outline: 2px solid #6e8d5b;outline-offset: 3px;}
+@media(max-width:760px) {.dp-dialog{width:calc(100vw - 20px);max-height:calc(100dvh - 20px);border-radius:16px;}.dp-panel{padding:14px;}.dp-images.dp-compare{grid-template-columns:minmax(0,1fr);gap:12px;}.dp-compare img{height:25dvh;}.dp-images:not(.dp-compare) img{height:57dvh;}.dp-tabs{gap:1px;}.dp-tabs button{padding:8px 10px;font-size:12px;gap:5px;}.dp-panel h2{font-size:25px;}}

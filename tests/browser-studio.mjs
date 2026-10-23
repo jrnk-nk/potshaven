@@ -25,6 +25,8 @@ const state = Object.fromEntries(collections.map(name => [name, []]));
 Object.assign(state, {
   settings: {companyName: 'PotsHavenGh', logo: '/branding/potshaven-logo.png', tagline: 'Brighten your world', watermark: 'Designed by PotsHavenGh', currency: 'GHS'},
   role: 'owner', demoMode: false, imageGenerationConfigured: true,
+  places: [{id: 'place-hotel', name: 'Garden Hotel', client: 'Hotel manager'}, {id: 'place-court', name: 'Palm Court', client: 'Court manager'}],
+  inventory: [{id: 'plant-1', name: 'Bird of paradise', category: 'Plants', quantity: 18, minStock: 2, unit: 'pots'}, {id: 'plant-2', name: 'Snake plant', category: 'Plants', quantity: 7, minStock: 1, unit: 'plants'}, {id: 'plant-empty', name: 'Out-of-stock fern', category: 'Plants', quantity: 0, minStock: 1}, {id: 'tool-1', name: 'Pruning shears', category: 'Tools', quantity: 4, minStock: 1}],
 });
 const generationRequests = [];
 let failNextGeneration = false;
@@ -70,6 +72,7 @@ try {
         image: `/media/designs/${id}.png`, source: 'Design studio', published: false,
         createdAt: new Date(Date.UTC(2026, 9, 23, 10, successfulGenerations)).toISOString(),
         conversationId: parent?.conversationId || id, parentDesignId: parent?.id || '',
+        placeId: body.placeId ?? parent?.placeId ?? '',
         referenceImages: (body.referenceImages || []).map((_, index) => `/media/uploads/${id}-${index}.png`),
         instructionHistory: [...(parent?.instructionHistory || []), body.prompt],
       };
@@ -97,6 +100,7 @@ try {
   await page.screenshot({path: join(artifacts, 'studio-chat-empty.png'), fullPage: true});
   console.log('PASS simple chat welcome has no measurements form and requires a message before sending');
 
+  await studio.getByRole('combobox', {name: 'Design place', exact: true}).selectOption('place-hotel');
   await upload.setInputFiles([photo, secondPhoto]);
   await expect(studio.locator('.dc-attachment')).toHaveCount(2);
   const firstPrompt = 'Create a welcoming hotel entrance with tropical plants and warm terracotta pots.';
@@ -112,9 +116,63 @@ try {
   assert.ok(generationRequests[0].referenceImages.every(value => /^data:image\/(png|jpeg|webp);base64,/.test(value)));
   assert.equal(generationRequests[0].measurements, undefined);
   assert.equal(generationRequests[0].parentDesignId, undefined);
+  assert.equal(generationRequests[0].placeId, 'place-hotel');
+  assert.equal(state.designs[0].placeId, 'place-hotel');
   await expect(composer).toHaveValue('');
   await expect(studio.locator('.dc-attachment')).toHaveCount(0);
   console.log('PASS multiple site photos are sent with the message, and a finished design appears in the conversation');
+
+  const openVersionMenu = async index => {
+    const menu = studio.locator('.dc-version-menu').nth(index);
+    if (!await menu.evaluate(element => element.open)) await menu.locator('summary').click();
+    return menu;
+  };
+  const closeVersionMenu = async index => {
+    const menu = studio.locator('.dc-version-menu').nth(index);
+    if (await menu.evaluate(element => element.open)) await menu.locator('summary').click();
+  };
+  const paidRequestsBeforeRefinement = generationRequests.length;
+  await studio.getByRole('button', {name: 'Less maintenance', exact: true}).click();
+  await expect(composer).toHaveValue(/easier to maintain/);
+  await studio.getByRole('button', {name: 'Use our plants', exact: true}).click();
+  await expect(composer).toHaveValue(/Bird of paradise: 18 pots/);
+  await expect(composer).toHaveValue(/Snake plant: 7 plants/);
+  assert.ok(!/Out-of-stock fern|Pruning shears/.test(await composer.inputValue()), 'Stock suggestions must use available plants only.');
+  assert.equal(generationRequests.length, paidRequestsBeforeRefinement, 'Refinement ideas must prepare a message without submitting a paid generation.');
+  await composer.fill('Please keep the existing entrance clear.');
+  await page.reload();
+  await expect(composer).toHaveValue('Please keep the existing entrance clear.');
+  console.log('PASS quick refinements prepare editable messages using real plant stock, and text drafts survive reload without a generation');
+
+  await studio.getByRole('button', {name: 'Design details', exact: true}).click();
+  const details = page.getByRole('dialog', {name: 'Design details', exact: true});
+  await details.getByRole('textbox', {name: 'Design name', exact: true}).fill('Palm Court entrance');
+  await details.getByRole('combobox', {name: 'Design place', exact: true}).selectOption('place-court');
+  await details.getByRole('checkbox', {name: 'Add to favourites', exact: true}).check();
+  await details.getByRole('button', {name: 'Save details', exact: true}).click();
+  await expect(details).toHaveCount(0);
+  assert.equal(state.designs[0].studioTitle, 'Palm Court entrance');
+  assert.equal(state.designs[0].placeId, 'place-court');
+  assert.equal(state.designs[0].favorite, true);
+  await expect(studio.locator('.dc-project-title')).toContainText('Palm Court entrance');
+  await expect(studio.locator('.dc-project-title')).toContainText('Palm Court');
+  console.log('PASS a design can be renamed, linked to a place, and favourited without changing its saved image');
+
+  await studio.getByRole('button', {name: 'Compare before and after', exact: true}).first().click();
+  const preview = page.getByRole('dialog', {name: 'View design version 1', exact: true});
+  await expect(preview.getByAltText('Original site photo', {exact: true})).toBeVisible();
+  await expect(preview.getByAltText('Enlarged design version 1', {exact: true})).toBeVisible();
+  await preview.getByRole('button', {name: 'Original', exact: true}).click();
+  await expect(preview.getByAltText('Enlarged design version 1', {exact: true})).toHaveCount(0);
+  await preview.getByRole('button', {name: 'Design', exact: true}).click();
+  await expect(preview.getByAltText('Original site photo', {exact: true})).toHaveCount(0);
+  await expect(preview.getByAltText('Enlarged design version 1', {exact: true})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(preview).toHaveCount(0);
+  await studio.getByRole('button', {name: 'View design version 1', exact: true}).click();
+  await expect(preview).toBeVisible();
+  await preview.getByRole('button', {name: 'Close image preview', exact: true}).click();
+  console.log('PASS before-and-after comparison and image enlargement open the saved original and correct design');
 
   await composer.fill('Keep the terracotta pots.');
   await composer.press('Shift+Enter');
@@ -124,11 +182,12 @@ try {
   await expect(studio.locator('.dc-turn')).toHaveCount(2);
   await expect(studio.getByAltText('Design version 2', {exact: true})).toBeVisible();
   assert.equal(generationRequests[1].parentDesignId, 'studio-test-1');
+  assert.equal(generationRequests[1].placeId, 'place-court', 'Edits must retain the conversation’s current linked place.');
   assert.match(generationRequests[1].prompt, /terracotta pots\.\nAdd more flowering/);
   assert.equal(await studio.locator('.dc-design-image').count(), 2);
   console.log('PASS Enter sends a follow-up against the previous design while Shift+Enter adds a line and older versions remain visible');
 
-  await studio.getByRole('button', {name: 'Edit this version', exact: true}).first().click();
+  await (await openVersionMenu(0)).getByRole('button', {name: 'Edit this version', exact: true}).click();
   await composer.fill('Try white flowers instead.');
   await send.click();
   await expect(studio.locator('.dc-turn')).toHaveCount(3);
@@ -157,16 +216,24 @@ try {
   assert.equal(generationRequests[4].referenceImages.length, 1);
   console.log('PASS a failed generation preserves the message and attachments and only retries when asked');
 
-  await studio.getByRole('button', {name: 'Add to portfolio', exact: true}).last().click();
+  await (await openVersionMenu(3)).getByRole('button', {name: 'Add to portfolio', exact: true}).click();
   await expect(studio.getByRole('button', {name: 'Remove from portfolio', exact: true})).toHaveCount(1);
   assert.equal(state.designs.at(-1).published, true);
+  await closeVersionMenu(3);
   const downloaded = page.waitForEvent('download');
   await studio.getByRole('button', {name: 'Download image', exact: true}).last().click();
   assert.match((await downloaded).suggestedFilename(), /\.png$/i);
   console.log('PASS finished designs can be added to the portfolio and downloaded with company branding');
 
+  await (await openVersionMenu(1)).getByRole('button', {name: 'Choose this version', exact: true}).click();
+  await expect(studio.locator('.dc-chosen-badge')).toContainText('Version 2 chosen');
+  assert.equal(state.designs[0].approvedDesignId, 'studio-test-2');
+  await closeVersionMenu(1);
   await page.reload();
   await expect(studio.locator('.dc-turn')).toHaveCount(4);
+  await expect(studio.locator('.dc-chosen-badge')).toContainText('Version 2 chosen');
+  await expect(studio.locator('.dc-project-title')).toContainText('Palm Court entrance');
+  console.log('PASS the chosen version and design details persist across refresh without replacing other versions');
   await expect(studio.getByAltText('Design version 1', {exact: true})).toBeAttached();
   await page.screenshot({path: join(artifacts, 'studio-chat-conversation.png'), fullPage: true});
   await studio.getByRole('button', {name: 'New design', exact: true}).click();
@@ -174,15 +241,34 @@ try {
   await expect(studio.locator('.dc-turn')).toHaveCount(0);
   assert.equal(state.designs.length, 4, 'New design must keep previous saved versions.');
   await studio.getByRole('button', {name: 'Recent designs', exact: true}).click();
-  await studio.getByRole('button', {name: new RegExp(firstPrompt.slice(0, 35))}).click();
+  const library = page.getByRole('dialog', {name: 'Recent designs', exact: true});
+  await library.getByRole('searchbox', {name: 'Search designs', exact: true}).fill('unmatched design');
+  await expect(library.getByText('No designs found', {exact: true})).toBeVisible();
+  await library.getByRole('searchbox', {name: 'Search designs', exact: true}).fill('Palm Court');
+  await library.getByRole('button', {name: 'Favourites', exact: true}).click();
+  await expect(library.locator('.dl-item')).toHaveCount(1);
+  await expect(library.locator('.dl-item')).toContainText('Chosen');
+  await library.getByRole('button', {name: /Palm Court entrance/}).click();
   await expect(studio.locator('.dc-turn')).toHaveCount(4);
   console.log('PASS a saved conversation survives reload and can be reopened after starting a new design');
 
   await page.setViewportSize({width: 390, height: 844});
+  const menuButton = page.getByRole('button', {name: 'Open menu', exact: true});
+  await menuButton.click();
+  const menu = page.getByRole('dialog', {name: 'Workspace menu', exact: true});
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('button', {name: 'Close workspace menu', exact: true})).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await menu.evaluate(element => element.contains(document.activeElement)), true, 'Keyboard focus must stay inside the open mobile menu.');
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(menuButton).toBeFocused();
   await composer.fill('Make the entrance feel a little brighter.');
   await send.scrollIntoViewIfNeeded();
   await send.click({trial: true});
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'The mobile chat must not overflow horizontally.');
+  const sendBox = await send.boundingBox();
+  assert.ok(sendBox && sendBox.width >= 44 && sendBox.height >= 44, 'The mobile send button must have a 44px touch target.');
   const mobileBox = await composer.boundingBox();
   assert.ok(mobileBox && mobileBox.width > 200 && mobileBox.y >= 0 && mobileBox.y + mobileBox.height <= 844, 'The mobile composer must be visible and usable.');
   await page.screenshot({path: join(artifacts, 'studio-chat-mobile.png'), fullPage: true});

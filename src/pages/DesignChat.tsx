@@ -1,8 +1,10 @@
 import {useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent} from 'react';
-import {ArrowDownToLine, ArrowRight, ArrowUp, Check, ChevronDown, CornerUpLeft, History, ImagePlus, LoaderCircle, Plus, Sparkles, Sprout, X} from 'lucide-react';
+import {ArrowDownToLine, ArrowRight, ArrowUp, Check, ChevronDown, CornerUpLeft, History, ImagePlus, LoaderCircle, Plus, Sparkles, Sprout, X, Columns2, Expand, MoreHorizontal, Settings2, Star, CheckCircle2} from 'lucide-react';
 import {useApp} from '../state';
 import {prepareImage} from '../images';
 import './DesignChat.css';
+import DesignLibrary, {DesignDetails} from './DesignLibrary';
+import DesignPreview from './DesignPreview';
 
 type Row = Record<string, any>;
 type Photo = {id: string; image: string; name: string};
@@ -11,6 +13,13 @@ type Conversation = {id: string; designs: Row[]; title: string; updatedAt: strin
 type Props = {downloadBranded: (design: Row, settings: Row) => Promise<void>};
 
 const selectionKey = 'potshaven:design-conversation';
+const draftKey = 'potshaven:studio-draft:';
+function savedDraft(id: string) {try {return sessionStorage.getItem(draftKey + (id || 'new'))?.slice(0, 6000) || '';} catch {return '';}}
+const refinements = [
+  {label: 'Less maintenance', prompt: 'Keep the layout and existing structures. Make this design easier to maintain with resilient plants and a practical watering plan.'},
+  {label: 'More colour', prompt: 'Keep the layout and existing structures. Add more colour through a balanced mix of flowering plants and foliage.'},
+  {label: 'Lower cost', prompt: 'Keep the layout and existing structures. Simplify this concept with fewer plant varieties and practical, affordable pots and materials.'},
+];
 const suggestions = [
   {label: 'A welcoming entrance', prompt: 'Create a welcoming entrance with beautiful plants and elegant pots.'},
   {label: 'A greener roundabout', prompt: 'Design a lush, colourful roundabout that is easy to maintain.'},
@@ -19,29 +28,28 @@ const suggestions = [
 const message = (error: unknown) => error instanceof Error ? error.message : 'Your design could not be created. Please try again.';
 const dateValue = (design: Row) => Date.parse(design.createdAt || '') || 0;
 function initialSelection() {try {return localStorage.getItem(selectionKey) || '';} catch {return '';}}
-function timeLabel(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? 'Saved design' : date.toLocaleDateString('en-GH', {month: 'short', day: 'numeric'});
-}
+
 
 export default function DesignChat({downloadBranded}: Props) {
   const {data, connection, refresh, update, notify} = useApp();
   const [activeId, setActiveId] = useState(initialSelection);
   const [recentResults, setRecentResults] = useState<Row[]>([]);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(() => savedDraft(initialSelection()));
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [pending, setPending] = useState<PendingMessage | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [editFromId, setEditFromId] = useState('');
+  const [placeId, setPlaceId] = useState('');
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [preview, setPreview] = useState<Row | null>(null);
   const [actionBusy, setActionBusy] = useState('');
   const inFlight = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const historyRef = useRef<HTMLDivElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
   const online = connection === 'online';
   const ready = Boolean(data.imageGenerationConfigured);
@@ -60,17 +68,22 @@ export default function DesignChat({downloadBranded}: Props) {
       groups.set(id, [...(groups.get(id) || []), design]);
     }
     return [...groups.entries()].map(([id, versions]): Conversation => ({
-      id, designs: versions, title: versions[0].title || versions[0].prompt || 'Untitled design', updatedAt: versions[versions.length - 1].createdAt || '',
+      id, designs: versions, title: versions[0].studioTitle || versions[0].title || versions[0].prompt || 'Untitled design', updatedAt: versions[versions.length - 1].createdAt || '',
     })).sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
   }, [designs]);
   const conversation = conversations.find(item => item.id === activeId);
   const versions = conversation?.designs || [];
   const latest = versions[versions.length - 1];
+  const root = versions[0];
+  const linkedPlace = (data.places || []).find((place: Row) => place.id === (root?.placeId || placeId));
+  const original = versions.flatMap(design => Array.isArray(design.referenceImages) ? design.referenceImages : []).find(Boolean);
+  const availablePlants = (data.inventory || []).filter((item: Row) => item.category === 'Plants' && Number(item.quantity) > 0).slice(0, 12);
   const parent = versions.find(design => design.id === editFromId) || latest;
   const selectedVersion = parent ? versions.findIndex(design => design.id === parent.id) + 1 : 0;
   const hasMessages = versions.length > 0 || busy;
 
   useEffect(() => {try {if (activeId) localStorage.setItem(selectionKey, activeId); else localStorage.removeItem(selectionKey);} catch {/* A private browsing session can still use the studio. */}}, [activeId]);
+  useEffect(() => {try {if (draft) sessionStorage.setItem(draftKey + (activeId || 'new'), draft); else sessionStorage.removeItem(draftKey + (activeId || 'new'));} catch {/* Text drafts are optional when storage is unavailable. */}}, [activeId, draft]);
   useLayoutEffect(() => {
     // A new conversation reuses the scroll container. Reset the old chat's
     // scroll position before painting the welcome screen on shorter phones.
@@ -85,20 +98,12 @@ export default function DesignChat({downloadBranded}: Props) {
     const frame = requestAnimationFrame(() => bottomRef.current?.scrollIntoView({behavior: 'smooth', block: 'end'}));
     return () => cancelAnimationFrame(frame);
   }, [activeId, versions.length, busy, hasMessages]);
-  useEffect(() => {
-    if (!historyOpen) return;
-    const outside = (event: PointerEvent) => {
-      if (!historyRef.current?.contains(event.target as Node) && !historyButtonRef.current?.contains(event.target as Node)) setHistoryOpen(false);
-    };
-    const escape = (event: globalThis.KeyboardEvent) => {if (event.key === 'Escape') {setHistoryOpen(false); historyButtonRef.current?.focus();}};
-    document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape);
-    return () => {document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape);};
-  }, [historyOpen]);
+
 
   function selectConversation(id: string) {
     if (busy || preparing) return;
     if (!id && threadRef.current) threadRef.current.scrollTop = 0;
-    setActiveId(id); setDraft(''); setPhotos([]); setError(''); setEditFromId(''); setHistoryOpen(false);
+    setActiveId(id); setDraft(id ? savedDraft(id) : ''); setPhotos([]); setError(''); setEditFromId(''); setPlaceId(''); setHistoryOpen(false); setDetailsOpen(false);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
   async function addPhotos(event: ChangeEvent<HTMLInputElement>) {
@@ -126,7 +131,7 @@ export default function DesignChat({downloadBranded}: Props) {
     try {
       const response = await fetch('/api/designs/generate', {
         method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', Accept: 'application/json'},
-        body: JSON.stringify({prompt, ...(submitted.photos.length ? {referenceImages: submitted.photos.map(photo => photo.image)} : {}), ...(parent ? {parentDesignId: parent.id} : {})}),
+        body: JSON.stringify({prompt, ...(submitted.photos.length ? {referenceImages: submitted.photos.map(photo => photo.image)} : {}), ...(parent ? {parentDesignId: parent.id, placeId: root?.placeId || ''} : placeId ? {placeId} : {})}),
         signal: controller.signal,
       });
       const result = await response.json().catch(() => null);
@@ -137,6 +142,7 @@ export default function DesignChat({downloadBranded}: Props) {
       const design = result?.design || result;
       if (!design?.id || !design.image) throw new Error('Your design could not be opened. Please refresh the conversation before trying again.');
       setRecentResults(current => [...current.filter(item => item.id !== design.id), design]);
+      try {sessionStorage.removeItem(draftKey + (activeId || 'new'));} catch {/* The saved design remains available on the server. */}
       setActiveId(design.conversationId || design.id); setEditFromId('');
       notify('Your design is ready.');
       void refresh();
@@ -150,7 +156,7 @@ export default function DesignChat({downloadBranded}: Props) {
     }
   }
   function keyboardSend(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {event.preventDefault(); void send();}
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !matchMedia('(pointer: coarse)').matches) {event.preventDefault(); void send();}
   }
   async function download(design: Row) {
     setActionBusy(`download-${design.id}`); setError('');
@@ -165,22 +171,41 @@ export default function DesignChat({downloadBranded}: Props) {
     finally {setActionBusy('');}
   }
 
+  async function saveDetails(patch: Row) {
+    if (!root) return;
+    const saved = await update('designs', root.id, patch);
+    setRecentResults(current => [...current.filter(item => item.id !== saved.id), saved]);
+    notify('Design details saved.');
+  }
+  async function chooseVersion(design: Row) {
+    if (!root) return;
+    setActionBusy(`choose-${design.id}`); setError('');
+    try {await saveDetails({approvedDesignId: root.approvedDesignId === design.id ? '' : design.id}); notify(root.approvedDesignId === design.id ? 'Version selection cleared.' : `Version ${versions.findIndex(item => item.id === design.id) + 1} is your chosen design.`);}
+    catch (caught) {setError(message(caught));}
+    finally {setActionBusy('');}
+  }
+  function refine(prompt: string) {setDraft(prompt); setError(''); textareaRef.current?.focus();}
+
   return <section className={`design-chat${hasMessages ? ' dc-has-messages' : ''}`} aria-label="Design studio">
     <header className="dc-header">
       <div className="dc-heading"><span className="dc-eyebrow">ROOM FOR YOUR IDEAS</span><h1>Design studio<span className="dc-heading-dot" /></h1></div>
       <div className="dc-header-actions">
-        {conversations.length > 0 && <button type="button" ref={historyButtonRef} aria-label="Recent designs" className={`dc-header-button${historyOpen ? ' is-open' : ''}`} onClick={() => setHistoryOpen(open => !open)} aria-expanded={historyOpen} aria-controls="dc-recent-chats" disabled={busy || preparing}><History size={16} /><span>Recent designs</span><ChevronDown size={13} /></button>}
+        {conversations.length > 0 && <button type="button" ref={historyButtonRef} aria-label="Recent designs" className={`dc-header-button${historyOpen ? ' is-open' : ''}`} onClick={() => setHistoryOpen(open => !open)} aria-expanded={historyOpen} disabled={busy || preparing}><History size={16} /><span>Recent designs</span><ChevronDown size={13} /></button>}
         <button type="button" className="dc-new-button" onClick={() => selectConversation('')} disabled={busy || preparing}><Plus size={16} /><span>New design</span></button>
       </div>
-      {historyOpen && <div className="dc-history" id="dc-recent-chats" ref={historyRef}><div className="dc-history-heading"><strong>Your conversations</strong><button type="button" className="dc-icon-button" aria-label="Close recent designs" onClick={() => setHistoryOpen(false)}><X size={16} /></button></div><div className="dc-history-list">{conversations.map(item => <button key={item.id} type="button" className={`dc-history-item${item.id === activeId ? ' is-active' : ''}`} aria-pressed={item.id === activeId} onClick={() => selectConversation(item.id)}><img src={item.designs[item.designs.length - 1].image} alt="" loading="lazy" /><span><strong>{item.title}</strong><small>{timeLabel(item.updatedAt)} · {item.designs.length} {item.designs.length === 1 ? 'version' : 'versions'}</small></span>{item.id === activeId && <Check size={15} />}</button>)}</div></div>}
+
     </header>
 
+    {historyOpen && <DesignLibrary conversations={conversations} activeId={activeId} places={data.places || []} onSelect={selectConversation} onClose={() => setHistoryOpen(false)} />}
+    {detailsOpen && conversation && <DesignDetails conversation={conversation} places={data.places || []} online={online} onClose={() => setDetailsOpen(false)} onSave={saveDetails} />}
+    {preview && <DesignPreview image={preview.image} original={original} version={versions.findIndex(item => item.id === preview.id) + 1} onClose={() => setPreview(null)} />}
+    {conversation ? <div className="dc-project-bar"><button type="button" className="dc-project-title" aria-label="Design details" onClick={() => setDetailsOpen(true)} disabled={busy || preparing}>{root?.favorite && <Star size={15} fill="currentColor"/>}<span><strong>{conversation.title}</strong><small>{linkedPlace?.name || 'Add a place or rename this design'}</small></span><Settings2 size={16}/></button>{root?.approvedDesignId && <span className="dc-chosen-badge"><CheckCircle2 size={13}/> Version {Math.max(1, versions.findIndex(item => item.id === root.approvedDesignId) + 1)} chosen</span>}</div> : (data.places || []).length > 0 && <div className="dc-place-context"><label htmlFor="dc-place">Design for</label><select id="dc-place" aria-label="Design place" value={placeId} onChange={event => setPlaceId(event.target.value)} disabled={busy}><option value="">Any place</option>{data.places.map((place: Row) => <option value={place.id} key={place.id}>{place.name}</option>)}</select><span>Optional</span></div>}
     <div className="dc-body">
       <div ref={threadRef} className={`dc-thread${!hasMessages ? ' dc-thread-empty' : ''}`} role="log" aria-label="Design conversation" aria-live="polite" aria-busy={busy}>
         {!hasMessages ? <div className="dc-welcome"><div className="dc-botanical" aria-hidden="true"><Sprout size={43} strokeWidth={1.15} /><Sparkles className="dc-botanical-spark" size={17} strokeWidth={1.3} /></div><span className="dc-welcome-eyebrow">A LITTLE IMAGINATION. A FRESH POSSIBILITY.</span><h2>What shall we create?</h2><p>Add a photo of the place, then describe your idea.<br className="dc-desktop-break" /> We can keep refining it together.</p><div className="dc-suggestions" aria-label="Ideas to get started">{suggestions.map((suggestion, index) => <button key={suggestion.label} type="button" onClick={() => {setDraft(suggestion.prompt); setError(''); textareaRef.current?.focus();}}><span className="dc-suggestion-number">0{index + 1}</span>{suggestion.label}<ArrowRight size={13} /></button>)}</div></div> : <div className="dc-messages">{versions.map((design, index) => <article className="dc-turn" key={design.id}>
           <div className="dc-user-message"><span className="dc-message-label">YOU</span>{Array.isArray(design.referenceImages) && design.referenceImages.length > 0 && <div className="dc-message-photos">{design.referenceImages.map((image: string, photoIndex: number) => <img key={`${image}-${photoIndex}`} src={image} alt={`Reference photo ${photoIndex + 1}`} loading="lazy" />)}</div>}<p>{design.prompt || design.title}</p>{design.parentDesignId && design.parentDesignId !== versions[index - 1]?.id && <span className="dc-branch-label"><CornerUpLeft size={11} />Editing version {Math.max(1, versions.findIndex(item => item.id === design.parentDesignId) + 1)}</span>}</div>
-          <div className="dc-studio-reply"><div className="dc-reply-heading"><span className="dc-reply-avatar"><Sprout size={17} strokeWidth={1.5} /></span><strong>{index ? 'Your updated concept' : 'Your first concept'}</strong><span className="dc-version">VERSION {String(index + 1).padStart(2, '0')}</span></div><div className="dc-image-card"><img className="dc-design-image" src={design.image} alt={`Design version ${index + 1}`} loading="lazy" /><div className="dc-image-actions"><button type="button" aria-label="Download image" onClick={() => void download(design)} disabled={Boolean(actionBusy)}>{actionBusy === `download-${design.id}` ? <LoaderCircle size={14} className="dc-spin" /> : <ArrowDownToLine size={14} />}<span>Download</span></button><button type="button" aria-label={design.published ? 'Remove from portfolio' : 'Add to portfolio'} aria-pressed={Boolean(design.published)} onClick={() => void publish(design)} disabled={Boolean(actionBusy) || !online}>{actionBusy === `publish-${design.id}` ? <LoaderCircle size={14} className="dc-spin" /> : design.published ? <Check size={14} /> : <Plus size={14} />}<span>{design.published ? 'In portfolio' : 'Add to portfolio'}</span></button><button type="button" className={editFromId === design.id ? 'is-selected' : ''} aria-pressed={editFromId === design.id} onClick={() => {setEditFromId(design.id); setError(''); textareaRef.current?.focus();}} disabled={busy || preparing}><CornerUpLeft size={14} /><span>Edit this version</span></button></div></div></div>
-        </article>)}{pending && <article className="dc-turn dc-pending-turn"><div className="dc-user-message"><span className="dc-message-label">YOU</span>{pending.photos.length > 0 && <div className="dc-message-photos">{pending.photos.map((photo, index) => <img key={photo.id} src={photo.image} alt={`Reference photo ${index + 1}`} />)}</div>}<p>{pending.prompt}</p></div><div className="dc-creating" role="status"><span className="dc-creating-icon"><Sprout size={22} strokeWidth={1.3} /></span><div><strong>Creating your design…</strong><span>A thoughtful design takes a little time.</span></div><span className="dc-typing"><i /><i /><i /></span></div></article>}<div ref={bottomRef} className="dc-scroll-anchor" /></div>}
+          <div className="dc-studio-reply"><div className="dc-reply-heading"><span className="dc-reply-avatar"><Sprout size={17} strokeWidth={1.5} /></span><strong>{index ? 'Your updated concept' : 'Your first concept'}</strong><span className="dc-version">VERSION {String(index + 1).padStart(2, '0')}</span></div><div className="dc-image-card"><button type="button" className="dc-open-image" aria-label={`View design version ${index + 1}`} onClick={() => setPreview(design)}><img className="dc-design-image" src={design.image} alt={`Design version ${index + 1}`} loading="lazy"/><span><Expand size={14}/> View image</span></button><div className="dc-image-actions"><button type="button" aria-label="Download image" onClick={() => void download(design)} disabled={Boolean(actionBusy)}>{actionBusy === `download-${design.id}` ? <LoaderCircle size={14} className="dc-spin" /> : <ArrowDownToLine size={14} />}<span>Download</span></button>{original && <button type="button" aria-label="Compare before and after" onClick={() => setPreview(design)}><Columns2 size={15}/><span>Compare</span></button>}<details className="dc-version-menu"><summary aria-label={`More options for version ${index + 1}`}><MoreHorizontal size={19}/><span>More</span></summary><div><button type="button" aria-label={design.published ? 'Remove from portfolio' : 'Add to portfolio'} aria-pressed={Boolean(design.published)} onClick={() => void publish(design)} disabled={Boolean(actionBusy) || !online}>{design.published ? <Check size={15}/> : <Plus size={15}/>}<span>{design.published ? 'In portfolio' : 'Add to portfolio'}</span></button><button type="button" aria-pressed={editFromId === design.id} onClick={event => {setEditFromId(design.id); setError(''); event.currentTarget.closest('details')?.removeAttribute('open'); textareaRef.current?.focus();}} disabled={busy || preparing}><CornerUpLeft size={15}/><span>Edit this version</span></button><button type="button" aria-label={root?.approvedDesignId === design.id ? 'Clear chosen version' : 'Choose this version'} aria-pressed={root?.approvedDesignId === design.id} onClick={() => void chooseVersion(design)} disabled={Boolean(actionBusy) || !online}><CheckCircle2 size={15}/><span>{root?.approvedDesignId === design.id ? 'Chosen version' : 'Choose this version'}</span></button></div></details></div></div></div>
+        </article>)}{latest && !busy && <div className="dc-refinements" aria-label="Quick design edits"><span>TRY A CHANGE</span><div>{refinements.map(item => <button key={item.label} type="button" onClick={() => refine(item.prompt)}>{item.label}<ArrowRight size={12}/></button>)}{availablePlants.length > 0 && <button type="button" onClick={() => refine('Keep the layout and existing structures. Refine this concept using suitable plants from our available stock where possible. Available stock (quantities are totals, not a reservation): ' + availablePlants.map((plant: Row) => `${plant.name}: ${plant.quantity} ${plant.unit || 'plants'}`).join('; ') + '. Do not assume these quantities are sufficient for the site.')}><Sprout size={13}/> Use our plants</button>}</div><small>Choose an idea, then edit the message before sending.</small></div>}{pending && <article className="dc-turn dc-pending-turn"><div className="dc-user-message"><span className="dc-message-label">YOU</span>{pending.photos.length > 0 && <div className="dc-message-photos">{pending.photos.map((photo, index) => <img key={photo.id} src={photo.image} alt={`Reference photo ${index + 1}`} />)}</div>}<p>{pending.prompt}</p></div><div className="dc-creating" role="status"><span className="dc-creating-icon"><Sprout size={22} strokeWidth={1.3} /></span><div><strong>Creating your design…</strong><span>A thoughtful design takes a little time.</span></div><span className="dc-typing"><i /><i /><i /></span></div></article>}<div ref={bottomRef} className="dc-scroll-anchor" /></div>}
       </div>
 
       <div className="dc-composer-area">

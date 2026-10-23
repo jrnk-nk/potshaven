@@ -1,4 +1,4 @@
-import {FINANCIAL_FEATURES_ENABLED} from '../src/features.ts';
+import {FINANCIAL_FEATURES_ENABLED} from '../src/features.js';
 import {AppError} from './store.js';
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);

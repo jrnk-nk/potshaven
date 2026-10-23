@@ -1,4 +1,4 @@
-import {FINANCIAL_FEATURES_ENABLED} from './features.ts';
+import {FINANCIAL_FEATURES_ENABLED} from './features.js';
 
 export type NavItem = {key: string; label: string; icon: string};
 

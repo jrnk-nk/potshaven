@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createStore} from './store.js';
 import {createApp} from './app.js';
-import {FINANCIAL_FEATURES_ENABLED} from '../src/features.ts';
+import {FINANCIAL_FEATURES_ENABLED} from '../src/features.js';
 import {isFinancialField, preserveFinancialMetadata} from './financial-access.js';
 
 const today = '2026-10-23';

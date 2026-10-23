@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {EnvHttpProxyAgent} from 'undici';
 import {AppError, validate} from './store.js';
 import {workspaceForRole, authorizeMutation} from './access.js';
-import {FINANCIAL_FEATURES_ENABLED} from '../src/features.ts';
+import {FINANCIAL_FEATURES_ENABLED} from '../src/features.js';
 import {assertNoFinancialFields} from './financial-access.js';
 
 const list = (state, key) => Array.isArray(state[key]) ? state[key] : [];

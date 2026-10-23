@@ -5,6 +5,7 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetch, EnvHttpProxyAgent } from 'undici';
 import { createStore, collections, AppError } from './store.js';
+import {decodeDesignReference, referenceUploads, instructionHistory, conversationPrompt} from './design-conversation.js';
 
 const safeEqual = (left, right) => {
   const a = Buffer.from(String(left || '')), b = Buffer.from(String(right || ''));
@@ -137,28 +138,65 @@ export function createApp({
       res.json(await pictures(await store.stock(req.params.id, quantity, { type: req.params.operation, jobId, note, actor: req.role === 'owner' ? 'Owner' : 'Manager' })));
     } catch (error) { next(error); }
   });
+  async function savedDesignImage(url) {
+    if (typeof url === 'string' && url.startsWith('data:image/')) return decodeDesignReference(url);
+    const match = typeof url === 'string' && /^\/media\/((?:uploads\/[a-f0-9]{64}|(?:designs\/)?[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.(png|jpg|webp))$/.exec(url);
+    if (!match) throw new AppError('This design cannot be used as a reference. Upload its original photo in a new chat.');
+    const key = /^(uploads|designs)\//.test(match[1]) ? match[1] : `designs/${match[1]}`;
+    const contentType = {png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp'}[match[2]];
+    let image;
+    if (mediaStorage) {
+      if (typeof mediaStorage.get === 'function') image = await mediaStorage.get(key);
+      else if (typeof store.getMedia === 'function') image = await store.getMedia(key);
+      else throw new AppError('Saved design photos are temporarily unavailable. Try again later.', 503);
+    } else {
+      try { image = {bytes: readFileSync(join(dataDir, key)), contentType}; }
+      catch { throw new AppError('This saved photo could not be opened. Upload the original photo in a new chat.'); }
+    }
+    if (!image || !Buffer.isBuffer(image.bytes) || !image.bytes.length || image.bytes.length > 8 * 1024 * 1024 || image.contentType !== contentType) {
+      throw new AppError('This saved photo could not be opened. Upload the original photo in a new chat.');
+    }
+    return {...image, extension: match[2]};
+  }
   app.post('/api/designs/generate', async (req, res, next) => {
     try {
       if (!imageKey) throw new AppError('Image generation is not connected yet. Add POTSHAVEN_OPENAI_KEY (or OPENAI_API_KEY) to the server environment to enable the design studio.', 503);
-      const { prompt, originalImage, measurements = '', placeId = '' } = req.body || {};
-      if (typeof prompt !== 'string' || prompt.trim().length < 8 || prompt.length > 6000) throw new AppError('Describe your design in 8–6,000 characters.');
-      if (typeof measurements !== 'string' || measurements.length > 2000) throw new AppError('Measurements are too long.');
+      const body = req.body || {};
+      if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > 6000) throw new AppError('Describe your design or edit in 1–6,000 characters.');
+      const prompt = body.prompt.trim();
+      if (body.measurements !== undefined && (typeof body.measurements !== 'string' || body.measurements.length > 2000)) throw new AppError('Measurements are too long.');
+      if (body.placeId !== undefined && (typeof body.placeId !== 'string' || body.placeId.length > 200)) throw new AppError('Choose an existing place.');
+      if (body.parentDesignId !== undefined && (typeof body.parentDesignId !== 'string' || !body.parentDesignId.trim() || body.parentDesignId.length > 200)) throw new AppError('Choose a saved design version to edit.');
+      const uploads = referenceUploads(body);
+      const parent = body.parentDesignId ? await store.get('designs', body.parentDesignId) : null;
+      if (body.parentDesignId && !parent) throw new AppError('The design version you want to edit was not found.', 404);
+      if (parent?.source === 'Portfolio upload') throw new AppError('Start a new design chat and upload the project photo as a reference.');
+      const placeId = body.placeId !== undefined ? body.placeId : parent?.placeId || '';
       if (placeId && !await store.get('places', placeId)) throw new AppError('Choose an existing place.');
-      const fullPrompt = `Create a professional landscaping and decorating design concept. Preserve the site's architecture, camera angle, access routes and permanent structures when a reference image is supplied. Use these site measurements as contextual guidance, not a certified scale drawing: ${measurements || 'Not supplied'}. Client brief: ${prompt}. Do not include text, logos or watermarks; branding will be applied separately.`;
-      const dispatcher = new EnvHttpProxyAgent({ headersTimeout: 660000, bodyTimeout: 660000 });
+      const measurements = body.measurements ?? parent?.measurements ?? '';
+      const history = instructionHistory(parent, prompt);
+      const fullPrompt = conversationPrompt(history, measurements, Boolean(parent));
+      const inherited = parent && (Array.isArray(parent.contextImages) ? parent.contextImages : Array.isArray(parent.referenceImages) ? parent.referenceImages : []);
+      const inheritedUrls = [...new Set(inherited || [])].slice(0, Math.max(0, 4 - uploads.length));
+      // The selected generated version must be first. The model receives the
+      // original brief and earlier edits along with the actual saved image.
+      const references = [
+        ...(parent ? [await savedDesignImage(parent.image)] : []),
+        ...uploads,
+        ...await Promise.all(inheritedUrls.map(url => savedDesignImage(url))),
+      ];
+      const dispatcher = new EnvHttpProxyAgent({headersTimeout: 270000, bodyTimeout: 270000});
       let response;
       try {
-        if (originalImage) {
-          const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(originalImage);
-          if (!match) throw new AppError('Upload a PNG, JPG or WebP reference image.');
-          const bytes = Buffer.from(match[2], 'base64');
-          if (bytes.length > 8 * 1024 * 1024) throw new AppError('Reference images must be under 8 MB.');
+        if (references.length) {
           const form = new FormData();
           form.set('model', imageModel); form.set('prompt', fullPrompt); form.set('quality', imageQuality); form.set('size', imageSize); form.set('output_format', 'jpeg'); form.set('output_compression', '95');
-          form.set('image', new Blob([bytes], { type: `image/${match[1]}` }), `site.${match[1]}`);
-          response = await fetchImage('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { Authorization: `Bearer ${imageKey}` }, body: form, dispatcher, signal: AbortSignal.timeout(600000) });
+          for (const [index, reference] of references.entries()) {
+            form.append(references.length === 1 ? 'image' : 'image[]', new Blob([reference.bytes], {type: reference.contentType}), `${index === 0 && parent ? 'selected-design' : 'reference'}-${index + 1}.${reference.extension}`);
+          }
+          response = await fetchImage('https://api.openai.com/v1/images/edits', {method: 'POST', headers: {Authorization: `Bearer ${imageKey}`}, body: form, dispatcher, signal: AbortSignal.timeout(240000)});
         } else {
-          response = await fetchImage('https://api.openai.com/v1/images/generations', { method: 'POST', headers: { Authorization: `Bearer ${imageKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: imageModel, prompt: fullPrompt, quality: imageQuality, size: imageSize, n: 1, output_format: 'jpeg', output_compression: 95 }), dispatcher, signal: AbortSignal.timeout(600000) });
+          response = await fetchImage('https://api.openai.com/v1/images/generations', {method: 'POST', headers: {Authorization: `Bearer ${imageKey}`, 'Content-Type': 'application/json'}, body: JSON.stringify({model: imageModel, prompt: fullPrompt, quality: imageQuality, size: imageSize, n: 1, output_format: 'jpeg', output_compression: 95}), dispatcher, signal: AbortSignal.timeout(240000)});
         }
         const result = await response.json();
         if (!response.ok) {
@@ -166,13 +204,22 @@ export function createApp({
           throw new AppError(reason, 502);
         }
         const image = result.data?.[0]?.b64_json;
-        if (!image) throw new AppError('The image service returned no image. Try again later.', 502);
-        const id = randomUUID();
+        if (typeof image !== 'string' || !image) throw new AppError('The image service returned no image. Try again later.', 502);
         const bytes = Buffer.from(image, 'base64');
+        if (!bytes.length || bytes.length > 8 * 1024 * 1024 || bytes.toString('base64') !== image) throw new AppError('The image service returned an unreadable image. Try again later.', 502);
+        const id = randomUUID();
+        const referenceImages = await Promise.all(uploads.map(upload => uploadPicture(upload.value, 'image')));
+        const contextImages = [...new Set([...referenceImages, ...await Promise.all(inheritedUrls.map(url => uploadPicture(url, 'image')))])].slice(0, 4);
         let imageUrl;
         if (mediaStorage) imageUrl = await mediaStorage.put(`designs/${id}.jpg`, bytes, 'image/jpeg');
         else { writeFileSync(join(dataDir, 'designs', `${id}.jpg`), bytes); imageUrl = `/media/${id}.jpg`; }
-        const design = await store.put('designs', { id, title: prompt.slice(0, 80), prompt, measurements, placeId, image: imageUrl, createdAt: new Date().toISOString(), model: imageModel, quality: imageQuality, size: imageSize, portfolio: false });
+        const design = await store.put('designs', {
+          id, title: prompt.slice(0, 80), prompt, measurements, placeId, image: imageUrl,
+          conversationId: parent ? parent.conversationId || parent.id : id,
+          parentDesignId: parent?.id || '', referenceImages, contextImages,
+          instructionHistory: history, source: 'Design studio', published: false,
+          createdAt: new Date().toISOString(), model: imageModel, quality: imageQuality, size: imageSize, portfolio: false,
+        });
         res.status(201).json(design);
       } finally { await dispatcher.close(); }
     } catch (error) {

@@ -1,0 +1,188 @@
+.design-chat {
+  --dc-green: #315b43;
+  --dc-ink: #304b3b;
+  --dc-muted: #87917d;
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 172px);
+  min-height: 580px;
+  max-width: 1250px;
+  margin: 0 auto;
+}
+.dc-header {position: relative; display: flex; justify-content: space-between; align-items: center; gap: 18px; padding-bottom: 23px; flex-shrink: 0;}
+.dc-eyebrow {font-size: 8px; font-weight: 600; letter-spacing: 2.1px; color: #8f9c7f;}
+.dc-heading h1 {font-family: var(--font-display, 'DM Serif Display', Georgia, serif); font-size: 29px; font-weight: 400; letter-spacing: -.7px; color: var(--dc-ink); margin: 7px 0 0; display: flex; align-items: center; gap: 12px;}
+.dc-heading-dot {width: 6px; height: 6px; border-radius: 50%; background: #a8ba89; margin-top: 7px;}
+.dc-header-actions {display: flex; align-items: center; gap: 10px;}
+.dc-header button {font: inherit;}
+.dc-header-button, .dc-new-button {display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; border-radius: 8px; padding: 9px 12px; font-size: 12px !important; cursor: pointer;}
+.dc-header-button {color: #7d8e70; background: transparent; border: 1px solid transparent;}
+.dc-header-button:hover, .dc-header-button.is-open {background: #edf2e7; color: #4c6c3f;}
+.dc-new-button {color: var(--dc-green); border: 1px solid #dce5d3; background: #fdfefa;}
+.dc-new-button:hover {background: #edf3e5; border-color: #c9d7bc;}
+.design-chat button:disabled {cursor: default; opacity: .5;}
+.design-chat button:focus-visible, .design-chat a:focus-visible {outline: 2px solid #7b9d65; outline-offset: 3px;}
+.dc-history {position: absolute; top: 67px; right: 0; z-index: 30; width: 335px; max-width: calc(100vw - 38px); background: #fffefa; border: 1px solid #dfe7d7; border-radius: 13px; box-shadow: 0 15px 60px #354c2a1c; overflow: hidden;}
+.dc-history-heading {display: flex; justify-content: space-between; align-items: center; padding: 15px 17px 10px;}
+.dc-history-heading strong {font-size: 12px; font-weight: 500; color: #6e825d;}
+.dc-history-list {max-height: 365px; overflow-y: auto; padding: 0 7px 8px;}
+.dc-history-item {width: 100%; display: flex; align-items: center; gap: 11px; padding: 11px 10px; border: 0; background: transparent; text-align: left; border-radius: 7px; cursor: pointer;}
+.dc-history-item:hover, .dc-history-item.is-active {background: #edf3e5;}
+.dc-history-item > img {height: 40px; width: 47px; object-fit: cover; border-radius: 5px; background: #e9efdf; flex-shrink: 0;}
+.dc-history-item > span {display: flex; flex-direction: column; flex: 1; gap: 6px; min-width: 0;}
+.dc-history-item strong {font-size: 12px; color: #526a46; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.dc-history-item small {font-size: 10px; color: #98a08d;}
+.dc-history-item > svg {color: #72915c; flex-shrink: 0;}
+.dc-icon-button {height: 28px; width: 28px; border: 0; border-radius: 50%; background: transparent; color: #839375; display: inline-grid; place-items: center; padding: 0; cursor: pointer; flex-shrink: 0;}
+.dc-icon-button:hover {background: #e8efdf;}
+.dc-body {display: flex; flex-direction: column; flex: 1; min-height: 0;}
+.dc-thread {flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #d7e1ce transparent;}
+.dc-thread-empty {display: flex; flex-direction: column; justify-content: flex-start; align-items: stretch; overflow-y: auto;}
+.dc-welcome {text-align: center; max-width: 780px; margin: auto; padding: 27px 0 34px; flex-shrink: 0;}
+.dc-botanical {height: 78px; width: 78px; background: #edf2e4; border: 1px solid #e1e9d6; color: #76905d; border-radius: 26px 26px 26px 8px; margin: 0 auto 25px; display: grid; place-items: center; position: relative; transform: rotate(-7deg);}
+.dc-botanical > svg:first-child {transform: rotate(7deg);}
+.dc-botanical-spark {position: absolute; top: -8px; right: -8px; color: #b3a878;}
+.dc-welcome-eyebrow {font-size: 8px; letter-spacing: 1.8px; color: #9ca38c; font-weight: 500;}
+.dc-welcome h2 {font-family: var(--font-display, 'DM Serif Display', Georgia, serif); font-size: clamp(34px, 3.3vw, 49px); font-weight: 400; line-height: 1.16; letter-spacing: -1.4px; color: #39573f; margin: 17px 0 15px;}
+.dc-welcome > p {font-size: 14px; color: #8d9881; line-height: 1.85; margin: 0;}
+.dc-suggestions {display: flex; justify-content: center; flex-wrap: wrap; gap: 9px; margin-top: 29px;}
+.dc-suggestions > button {display: flex; align-items: center; gap: 10px; font: inherit; font-size: 12px; min-height: 42px; color: #718365; background: #fcfdf9; border: 1px solid #e2e8d9; border-radius: 8px; padding: 12px 13px; cursor: pointer; transition: background .15s, border-color .15s;}
+.dc-suggestions > button:hover {border-color: #c6d5b7; background: #edf3e5;}
+.dc-suggestion-number {color: #acb49d; font-size: 8px;}
+.dc-suggestions > button > svg {color: #a3b28e;}
+.dc-messages {max-width: 820px; margin: 0 auto; padding: 17px 14px 5px;}
+.dc-turn {margin: 0 0 36px;}
+.dc-user-message {margin: 0 0 24px auto; background: #eaf0e2; border: 1px solid #e2e9d9; border-radius: 15px 15px 4px 15px; width: fit-content; max-width: 84%; padding: 16px 19px; color: #52674a;}
+.dc-message-label {font-size: 7px; letter-spacing: 1.3px; color: #99a489; display: block; margin-bottom: 8px; font-weight: 600;}
+.dc-user-message > p {font-size: 14px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;}
+.dc-message-photos {display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 11px;}
+.dc-message-photos img {height: 78px; width: 95px; object-fit: cover; border-radius: 7px; border: 2px solid #fffefa; background: #e2e9d7;}
+.dc-branch-label {display: flex; align-items: center; gap: 5px; font-size: 11px; color: #8a9b78; margin-top: 11px; padding-top: 9px; border-top: 1px solid #dce5d0;}
+.dc-studio-reply {min-width: 0;}
+.dc-reply-heading {display: flex; align-items: center; gap: 9px; margin-bottom: 12px;}
+.dc-reply-avatar {width: 27px; height: 27px; border: 1px solid #dfe8d5; background: #eff4e8; display: grid; place-items: center; border-radius: 50%; color: #7f956a; flex-shrink: 0;}
+.dc-reply-heading > strong {font-size: 12px; font-weight: 500; color: #718268;}
+.dc-version {font-size: 7px; font-weight: 500; letter-spacing: 1.1px; margin-left: auto; color: #9daa8c;}
+.dc-image-card {overflow: hidden; border: 1px solid #e0e6d8; border-radius: 12px; background: #fffefa; box-shadow: 0 4px 14px #334c2403;}
+.dc-design-image {display: block; width: 100%; max-height: 570px; aspect-ratio: 16 / 10; object-fit: contain; background: #edf1e7;}
+.dc-image-actions {display: flex; align-items: center; gap: 3px; padding: 8px 9px; border-top: 1px solid #edf0e6; flex-wrap: wrap;}
+.dc-image-actions > button {border: 0; background: none; display: flex; align-items: center; gap: 6px; border-radius: 5px; color: #8a9980; font: inherit; font-size: 12px; min-height: 40px; padding: 8px 9px; cursor: pointer;}
+.dc-image-actions > button:hover, .dc-image-actions > button.is-selected {color: #567445; background: #edf3e5;}
+.dc-image-actions > button:last-child {margin-left: auto;}
+.dc-image-actions > button[aria-pressed=true] {color: #66864e;}
+.dc-creating {display: flex; align-items: center; gap: 12px; border: 1px dashed #d4e0c6; background: #f0f5e9; border-radius: 12px; padding: 24px 20px; margin-top: 2px;}
+.dc-creating-icon {width: 39px; height: 39px; display: grid; place-items: center; color: #8da772; background: #e5eed9; border-radius: 50%; flex-shrink: 0;}
+.dc-creating > div {display: flex; flex-direction: column; gap: 7px; min-width: 0;}
+.dc-creating strong {font-size: 12px; color: #6e8958; font-weight: 500;}
+.dc-creating > div > span {font-size: 12px; color: #9ba98a; line-height: 1.6;}
+.dc-typing {display: flex; gap: 4px; margin-left: auto; padding-left: 8px;}
+.dc-typing i {height: 4px; width: 4px; background: #9baf84; border-radius: 50%; animation: dc-breathe 1.4s ease-in-out infinite;}
+.dc-typing i:nth-child(2) {animation-delay: .2s;}
+.dc-typing i:nth-child(3) {animation-delay: .4s;}
+.dc-scroll-anchor {height: 1px;}
+.dc-composer-area {width: 100%; max-width: 850px; margin: 0 auto; padding-top: 16px; flex-shrink: 0;}
+.dc-composer {background: #fffefa; border: 1px solid #dce5d2; box-shadow: 0 4px 25px #38532d07; border-radius: 17px; padding: 18px 18px 12px; transition: border-color .15s, box-shadow .15s;}
+.dc-composer:focus-within {border-color: #a4b991; box-shadow: 0 0 0 3px #7c9c6409, 0 5px 22px #38532d05;}
+.dc-composer > textarea {font: inherit; font-size: 15px; line-height: 1.8; color: #4c6546; padding: 0 2px; border: 0; background: transparent; outline: none; width: 100%; min-height: 54px; max-height: 160px; resize: none; display: block; box-sizing: border-box;}
+.dc-composer > textarea::placeholder {color: #a4ae97;}
+.dc-composer > textarea:disabled {opacity: .7;}
+.dc-composer-toolbar {display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px;}
+.dc-compose-left {display: flex; align-items: center; gap: 13px; min-width: 0;}
+.dc-attach-button {display: flex; align-items: center; gap: 8px; color: #789466; border: 0; background: #f1f5e9; border-radius: 7px; padding: 9px 11px; font: inherit; font-size: 12px; cursor: pointer; min-height: 40px; white-space: nowrap;}
+.dc-attach-button:hover {background: #e8f0dc;}
+.dc-photo-count {font-size: 10px; color: #a2ae93; white-space: nowrap;}
+.dc-file-input {position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none;}
+.dc-send-button {border: 0; border-radius: 10px; background: #3c6248; color: #fff; height: 36px; width: 38px; flex-shrink: 0; display: grid; place-items: center; cursor: pointer; transition: background .15s; padding: 0;}
+.dc-send-button:hover {background: #274b34;}
+.dc-send-button:disabled {background: #e6ecdd; color: #a3b18e; opacity: 1 !important;}
+.dc-composer-footnote {display: flex; align-items: center; justify-content: space-between; gap: 15px; color: #9aa78b; font-size: 10px; line-height: 1.65; padding: 11px 5px 0;}
+.dc-keyboard-hint {white-space: nowrap; font-size: 9px;}
+.dc-connection-note {display: flex; align-items: center; gap: 10px; background: #f5f1e5; border: 1px solid #eae1c9; padding: 11px 14px; border-radius: 8px; font-size: 12px; line-height: 1.75; color: #a18e5d; margin-bottom: 11px;}
+.dc-connection-note > svg {flex-shrink: 0; color: #b19e6c;}
+.dc-connection-note a {color: #8d7d50; text-decoration: underline; text-underline-offset: 3px; display: inline-flex; align-items: center; gap: 3px;}
+.dc-offline-note {font-size: 12px; color: #a18d60; line-height: 1.7; padding: 0 3px 10px;}
+.dc-error {display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fbf1ea; border: 1px solid #efd9cb; border-radius: 8px; padding: 9px 12px; color: #aa735b; font-size: 12px; line-height: 1.7; margin-bottom: 10px; overflow-wrap: anywhere;}
+.dc-error > span {min-width: 0;}
+.dc-error .dc-icon-button {color: #b58f7c;}
+.dc-editing {display: flex; align-items: center; gap: 10px; padding: 11px 13px; background: #edf3e5; border: 1px solid #dfe8d3; border-radius: 9px; margin-bottom: 10px;}
+.dc-editing > img {height: 34px; width: 43px; object-fit: cover; border-radius: 4px;}
+.dc-editing > span {flex: 1; display: flex; flex-direction: column; gap: 4px;}
+.dc-editing strong {font-size: 12px; color: #6f895c; font-weight: 500;}
+.dc-editing small {font-size: 11px; color: #9cae8c;}
+.dc-attachments {display: flex; flex-wrap: wrap; gap: 10px; padding-bottom: 14px;}
+.dc-attachment {position: relative; width: 85px;}
+.dc-attachment > img {height: 66px; width: 85px; display: block; object-fit: cover; border: 1px solid #e0e8d6; border-radius: 8px; background: #edf2e5;}
+.dc-attachment > button {position: absolute; top: -5px; right: -5px; height: 21px; width: 21px; display: grid; place-items: center; padding: 0; background: #fff; border: 1px solid #dce4d3; color: #829371; border-radius: 50%; cursor: pointer; box-shadow: 0 2px 4px #263d2010;}
+.dc-attachment > span {display: block; font-size: 10px; color: #a0ac92; margin-top: 6px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;}
+.dc-spin {animation: dc-spin 1s linear infinite;}
+@keyframes dc-spin {to {transform: rotate(360deg);}}
+@keyframes dc-breathe {0%, 80%, 100% {opacity: .35; transform: translateY(0);} 40% {opacity: 1; transform: translateY(-3px);}}
+@media (min-width: 1500px) {.dc-welcome {padding-bottom: 50px;}.dc-welcome h2 {font-size: 49px;}.dc-welcome > p {font-size: 14px;}}
+@media (max-width: 1100px) {.dc-keyboard-hint {display: none;}.dc-header {gap: 12px;}.dc-heading h1 {font-size: 27px;}.dc-header-actions {gap: 4px;}.dc-header-button, .dc-new-button {padding: 9px 10px;}.dc-welcome h2 {font-size: 39px;}.dc-welcome-eyebrow {font-size: 7px;letter-spacing: 1.5px;}.dc-suggestions {gap: 7px;}.dc-suggestions > button {padding: 11px;gap: 7px;}.dc-suggestion-number {display: none;}}
+@media (max-width: 760px) {
+  .design-chat {height: calc(100dvh - 194px); min-height: 380px;}
+  .dc-header {padding-bottom: 19px; gap: 10px;}
+  .dc-eyebrow {font-size: 7px;letter-spacing: 1.6px;}
+  .dc-heading h1 {font-size: 25px; margin-top: 6px; gap: 9px;}
+  .dc-heading-dot {height: 5px; width: 5px; margin-top: 5px;}
+  .dc-header-button {height: 39px; width: 36px; padding: 8px;}
+  .dc-header-button > span, .dc-header-button > svg:last-child {display: none;}
+  .dc-header-button > svg:first-child {height: 17px; width: 17px;}
+  .dc-new-button {font-size: 12px !important; gap: 5px; padding: 10px 9px; min-height: 40px;}
+  .dc-new-button > svg {height: 14px; width: 14px;}
+  .dc-history {top: 65px;}
+  .dc-welcome {padding: 14px 0 24px;}
+  .dc-botanical {height: 61px; width: 61px; border-radius: 20px 20px 20px 6px; margin-bottom: 22px;}
+  .dc-botanical > svg:first-child {height: 34px; width: 34px;}
+  .dc-botanical-spark {height: 14px; width: 14px; right: -6px; top: -6px;}
+  .dc-welcome-eyebrow {font-size: 6px; letter-spacing: 1.2px;}
+  .dc-welcome h2 {font-size: 34px; letter-spacing: -.9px; margin-top: 13px; margin-bottom: 13px;}
+  .dc-welcome > p {font-size: 14px;line-height: 1.8;}
+  .dc-desktop-break {display: none;}
+  .dc-suggestions {gap: 7px; margin-top: 23px;}
+  .dc-suggestions > button {font-size: 12px; padding: 10px 11px; border-radius: 7px;}
+  .dc-suggestions > button:last-child {display: none;}
+  .dc-suggestions > button > svg {width: 11px; height: 11px;}
+  .dc-messages {padding: 10px 1px 3px;}
+  .dc-turn {margin-bottom: 28px;}
+  .dc-user-message {max-width: 89%; padding: 13px 15px; margin-bottom: 21px; border-radius: 13px 13px 4px 13px;}
+  .dc-user-message > p {font-size: 14px; line-height: 1.75;}
+  .dc-message-label {font-size: 6px; margin-bottom: 7px;}
+  .dc-message-photos img {height: 65px; width: 77px;}
+  .dc-reply-heading {gap: 7px; margin-bottom: 10px;}
+  .dc-reply-heading > strong {font-size: 11px;}
+  .dc-reply-avatar {height: 25px; width: 25px;}
+  .dc-version {font-size: 6px;letter-spacing: .8px;}
+  .dc-image-card {border-radius: 9px;}
+  .dc-design-image {aspect-ratio: 4 / 3; max-height: 400px;}
+  .dc-image-actions {padding: 6px 5px;gap: 0;}
+  .dc-image-actions > button {min-height: 40px; padding: 8px 7px; font-size: 11px; gap: 5px;}
+  .dc-image-actions > button > svg {height: 12px; width: 12px;}
+  .dc-creating {padding: 19px 14px;gap: 10px;}
+  .dc-creating-icon {height: 33px; width: 33px;}
+  .dc-creating strong {font-size: 12px;}
+  .dc-creating > div > span {font-size: 11px; max-width: 180px;}
+  .dc-typing {gap: 3px;}
+  .dc-typing i {height: 3px; width: 3px;}
+  .dc-composer-area {padding-top: 11px;}
+  .dc-composer {border-radius: 13px; padding: 15px 13px 10px;}
+  .dc-composer > textarea {font-size: 16px; min-height: 48px;}
+  .dc-composer-toolbar {margin-top: 7px;}
+  .dc-compose-left {gap: 9px;}
+  .dc-attach-button {min-height: 40px; font-size: 12px; padding: 9px; gap: 6px;}
+  .dc-attach-button > svg {width: 16px; height: 16px;}
+  .dc-send-button {height: 37px; width: 38px; border-radius: 9px;}
+  .dc-photo-count {font-size: 10px;}
+  .dc-composer-footnote {font-size: 9px; padding-top: 9px; justify-content: center; text-align: center;}
+  .dc-connection-note {font-size: 11px; padding: 9px 11px; gap: 8px; line-height: 1.7; margin-bottom: 9px;}
+  .dc-connection-note > svg {height: 15px; width: 15px;}
+  .dc-error {font-size: 12px; padding: 8px 10px;}
+  .dc-offline-note {font-size: 11px; padding-bottom: 8px;}
+  .dc-attachment {width: 67px;}
+  .dc-attachment > img {width: 67px; height: 54px;}
+  .dc-attachments {gap: 10px; padding-bottom: 12px;}
+  .dc-attachment > span {font-size: 9px;}
+}
+@media (max-width: 760px) and (max-height: 740px) {.dc-botanical, .dc-welcome-eyebrow {display: none;}.dc-welcome {padding-top: 10px; padding-bottom: 15px;}.dc-welcome h2 {margin-top: 0;}.dc-suggestions {margin-top: 16px;}}
+@media (max-height: 740px) and (min-width: 761px) {.design-chat {min-height: 530px;}.dc-botanical {width: 55px;height: 55px;margin-bottom: 17px;}.dc-botanical > svg:first-child {height: 32px;width: 32px;}.dc-welcome {padding-top: 5px;padding-bottom: 15px;}.dc-welcome h2 {font-size: 35px;margin-top: 12px;margin-bottom: 10px;}.dc-suggestions {margin-top: 20px;}}
+@media (prefers-reduced-motion: reduce) {.dc-spin, .dc-typing i {animation: none;}.dc-suggestions > button, .dc-composer, .dc-send-button {transition: none;}}

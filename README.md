@@ -35,7 +35,8 @@ Copy `.env.example` to a private `.env` for local configuration. Set both `APP_O
 npm run build            # TypeScript + production bundle
 npm test                 # SQLite, PostgreSQL, API, media and cloud-handler tests
 npm run test:production  # Production assets, private sign-in, empty workspace
-npm run test:browser     # Operations, inventory, recovery and image preparation
+npm run test:browser     # Operations, inventory, recovery, images and studio chat
+npm run test:studio      # Photo attachments, saved chats, edits and mobile composer
 ```
 
 Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwright install chromium` or set `CHROMIUM_PATH`. Tests use temporary databases and servers, leaving company records alone. PostgreSQL tests run SQL against PGlite; they do not require or provision a live Supabase account.
@@ -48,7 +49,7 @@ Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwr
 - Projects, deadlines, task progress, budgets, direct costs, and stock consumption costs.
 - Purchase approvals, equipment servicing, plant care guides, crew skills/workload and transport/fuel costs.
 - Maintenance contracts, payments, expenses, client issues, branded service reports and a portfolio.
-- Photo-based image generation and refinement, official PotsHavenGh branding, and watermarked downloads. Measurements guide concepts; images are not construction drawings.
+- A conversational design studio: attach site photos, describe an idea, then ask for changes in the same saved chat. Earlier versions stay available for editing, portfolio sharing and branded downloads. Include measurements directly in the message when useful; concepts are not construction drawings.
 
 Reminders are in-app. Email, automatic WhatsApp sending and route optimisation are not configured.
 

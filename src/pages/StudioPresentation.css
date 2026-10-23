@@ -1,0 +1,61 @@
+.sp-dialog {
+  --sp-ink: #2b4938;
+  --sp-soft: #7c8c70;
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  background: #f7f8f2;
+  color: var(--sp-ink);
+  overflow: auto;
+}
+.sp-dialog::backdrop {background: #183b2d;}
+.sp-presentation {display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 330px;}
+.sp-header {display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 21px 32px 17px;}
+.sp-brand {min-width: 0; max-width: min(390px, 55vw);}
+.sp-actions {display: flex; align-items: center; gap: 10px; flex-shrink: 0;}
+.sp-actions button {min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid #dce5d3; border-radius: 10px; padding: 11px 16px; color: #3c6145; font: inherit; font-size: 12px; background: #fffefa; cursor: pointer;}
+.sp-actions button:hover {background: #edf2e6; border-color: #bdceaf;}
+.sp-actions button:disabled {opacity: .55; cursor: default;}
+.sp-actions .sp-close {height: 44px; width: 44px; padding: 0; border-radius: 50%; background: #edf2e6;}
+.sp-actions button:focus-visible {outline: 2px solid #668851; outline-offset: 4px;}
+.sp-canvas {display: flex; align-items: stretch; min-height: 0; min-width: 0; padding: 0 32px;}
+.sp-image-frame {display: flex; align-items: center; justify-content: center; width: 100%; max-width: 1650px; min-height: 0; margin: 0 auto; border: 1px solid #e3e8dc; border-radius: 18px; overflow: hidden; background: #edf1e6;}
+.sp-image {width: 100%; height: 100%; min-height: 0; max-height: 100%; object-fit: contain; display: block;}
+.sp-image-unavailable {display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 13px; padding: 26px; color: #6b805e; text-align: center;}
+.sp-image-unavailable strong {font-size: 15px; font-weight: 500;}
+.sp-image-unavailable p {margin: 0; color: var(--sp-soft); font-size: 12px; line-height: 1.6;}
+.sp-footer {display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 23px 34px 26px;}
+.sp-caption {display: flex; align-items: center; gap: 16px; min-width: 0;}
+.sp-caption-rule {height: 32px; width: 3px; border-radius: 4px; background: #83a36a; flex-shrink: 0;}
+.sp-caption h1 {font-family: var(--font-display, 'DM Serif Display', Georgia, serif); font-size: clamp(24px, 2.6vw, 34px); font-weight: 400; letter-spacing: -.6px; line-height: 1.18; margin: 0; overflow-wrap: anywhere;}
+.sp-signature {display: flex; flex-direction: column; gap: 5px; text-align: right; color: #607653; flex-shrink: 0; max-width: 35%;}
+.sp-signature strong {font-size: 12px; font-weight: 500; overflow-wrap: anywhere;}
+.sp-signature span {font-size: 11px; line-height: 1.5; color: #8a967e; overflow-wrap: anywhere;}
+.sp-spin {animation: sp-spin .9s linear infinite;}
+@keyframes sp-spin {to {transform: rotate(360deg);}}
+@media(max-width:760px) {
+  .sp-presentation {min-height: 280px;}
+  .sp-header {padding: max(13px, env(safe-area-inset-top)) 14px 13px; gap: 10px;}
+  .sp-brand {max-width: calc(100vw - 127px);}
+  .sp-actions {gap: 7px;}
+  .sp-actions .sp-download {width: 44px; height: 44px; padding: 0; border-radius: 50%;}
+  .sp-download span {display: none;}
+  .sp-canvas {padding: 0 12px;}
+  .sp-image-frame {border-radius: 12px;}
+  .sp-footer {align-items: flex-start; gap: 15px; padding: 18px 17px max(18px, env(safe-area-inset-bottom));}
+  .sp-caption {gap: 10px; flex: 1;}
+  .sp-caption-rule {height: 28px; width: 2px;}
+  .sp-caption h1 {font-size: 26px; line-height: 1.2; letter-spacing: -.5px;}
+  .sp-signature {padding-top: 3px; gap: 5px; max-width: 39%;}
+  .sp-signature strong {font-size: 10px;}
+  .sp-signature span {font-size: 10px;}
+}
+@media(max-width:400px) {.sp-caption h1 {font-size: 23px;}.sp-footer {gap: 10px;}.sp-signature {max-width: 36%;}}
+@media(max-height:500px) {.sp-header {padding-top: 8px; padding-bottom: 8px;}.sp-footer {padding-top: 10px; padding-bottom: 10px;}.sp-caption h1 {font-size: 23px;}.sp-signature span {display: none;}}
+@media(prefers-reduced-motion:reduce) {.sp-spin {animation: none;}}

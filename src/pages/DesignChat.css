@@ -247,3 +247,13 @@
  .dc-open-image>span {opacity:1;padding:6px 8px;font-size:10px;right:8px;bottom:8px;}
 }
 @media(max-width:760px) and (max-height:500px) {.dc-project-bar,.dc-place-context,.dc-header,.dc-composer-footnote{display:none;}.dc-composer>textarea{max-height:80px;}.dc-composer-area{padding-top:4px;}}
+
+.dc-gallery-button>span {display:inline!important;}
+.dc-gallery-button>svg {display:block!important;}
+.dc-gallery-button {width:auto!important;color:#3f6545;background:#edf3e7;min-height:44px;border:1px solid #dbe5d3;}
+.dc-present-button {min-width:44px;min-height:44px;}
+.dc-earlier-button {display:flex;align-items:center;justify-content:center;min-height:44px;margin:0 auto 20px;padding:9px 18px;font:inherit;font-size:12px;color:#5d7950;background:#f0f5e9;border:1px solid #dce6d2;border-radius:22px;cursor:pointer;}
+.dc-earlier-button:hover {background:#e5eedb;}
+.dc-image-signature {padding:12px 15px;background:#fffefa;border-top:1px solid #e5eadd;}
+.dc-gallery-error {padding:12px 16px;margin:16px 0;color:#986249;background:#fbf1ea;border:1px solid #ebd9cd;border-radius:9px;font-size:13px;}
+@media(max-width:760px) {.dc-heading h1{font-size:25px;}.dc-image-signature{padding:9px 12px;}.dc-gallery-button{padding:8px 10px;gap:6px;}.dc-gallery-button>span{font-size:12px;}.dc-present-button>span{display:none;}.dc-project-title small{max-width:220px;}.dc-chosen-badge{font-size:9px;}}

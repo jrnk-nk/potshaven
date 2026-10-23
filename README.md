@@ -40,6 +40,7 @@ npm run test:studio      # Photo attachments, saved chats, edits and mobile comp
 npm run test:auth        # Owner/manager sign-in, expiry and workspace-load recovery
 npm run test:assistant   # Grounded attention, reviewed changes, failures and mobile layout
 npm run test:workforce   # External worker agreements, assignments, WhatsApp and persistence
+npm run test:manager     # Daily brief, operational reminders, assignments and mobile layout
 ```
 
 Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwright install chromium` or set `CHROMIUM_PATH`. Tests use temporary databases and servers, leaving company records alone. PostgreSQL tests run SQL against PGlite; they do not require or provision a live Supabase account.
@@ -47,14 +48,14 @@ Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwr
 ## Included workflows
 
 - Places, clients, measurements, site photos, inspections, and maintenance history.
-- Daily jobs, assigned crews and vehicles, ordered routes, checklists, completion photos, and recurring maintenance. WhatsApp sharing prepares a message for the manager to send; replies do not sync automatically.
+- Daily jobs, assigned crews and vehicles, ordered routes, checklists, completion photos, and recurring maintenance. Home highlights checklist progress, overdue work, assignment checks, and operational reminders. A daily brief can be reviewed, copied, and opened in WhatsApp for the manager to send. WhatsApp sharing prepares a message for the manager to send; replies do not sync automatically.
 - Plant photos, stock counts, usage/restocking history, low-stock alerts and atomic deductions linked to job costs.
 - Projects, deadlines, task progress, budgets, direct costs, and stock consumption costs.
 - Purchase approvals, equipment servicing, plant care guides, crew skills/workload and transport/fuel costs.
 - Company staff and external workers with daily, weekly, fixed-term, or job-completion agreements. Save agreement dates, rates, signed references, and work instructions; job assignments flag availability and other visits on the same day. Rates are agreement records, not recorded payments.
 - A Company assistant that answers from saved business records and prepares job, worker, vehicle, and issue changes for review. Save each change explicitly. Its attention list checks overdue jobs, unchecked completion tasks, missing assignments, low stock, and expiring agreements without a model call.
 - Maintenance contracts, payments, expenses, client issues, branded service reports and a portfolio.
-- A conversational design studio: attach site photos, describe an idea, then ask for changes in the same saved chat. Earlier versions stay available for editing, portfolio sharing and branded downloads. Rename, link places, favourite, and choose versions in a searchable library; compare the original photo with a design. Quick edits fill a draft for review, including a prompt based on plants actually in stock. Unsent text survives a reload in the current browser tab; photo attachments must be re-added after a reload. Include measurements directly in the message when useful; concepts are not construction drawings.
+- A gallery that opens first in the studio: one chosen or latest image per space, with search and favourites. Open a space to attach photos and refine the idea in its own chat. The latest idea stays visible; earlier work is tucked behind one control. Earlier versions stay available for editing, portfolio sharing and branded downloads. Rename, link places, favourite, and choose the gallery image; compare the original photo with a design. Client presentation mode shows only the friendly space title, image, and company branding. Gallery/portfolio captions and downloaded filenames omit raw instructions and provider/model details. Quick edits fill a draft for review, including a prompt based on plants actually in stock. Unsent text survives a reload in the current browser tab; in-tab space switching keeps each space’s draft and photos separate. Photo attachments must be re-added after a reload. Include measurements directly in the message when useful; concepts are not construction drawings.
 
 AI replies and concepts need the configured provider key, model access, and billing. Automated tests mock provider requests and do not verify a paid generation against the live account. Reminders are in-app. Email, automatic WhatsApp sending and route optimisation are not configured.
 
@@ -69,3 +70,5 @@ Local production: `npm run build && npm start` serves the UI and API together on
 A [Dockerfile](Dockerfile) and [Render blueprint](render.yaml) remain available for an alternative SQLite service with a persistent disk; the Render plan is paid and has not been provisioned. No live hosting account is created by these files.
 
 Details: [API](server/API.md) · [PostgreSQL adapter](server/POSTGRES.md) · [Supabase setup](SUPABASE_SETUP.md).
+
+The [owner/manager workspace split](docs/ROLE_WORKSPACES_PROPOSAL.md) is a proposal awaiting user review. It is not an implemented permission change. Existing role authorization remains in place.

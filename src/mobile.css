@@ -1,4 +1,13 @@
 .drawer-close,.mobile-studio-brand{display:none}
+.sidebar-brand-note{display:inline-flex;align-items:center;gap:6px;color:#6c875e;font-size:8px;font-weight:600;letter-spacing:2px;margin-top:10px;padding:5px 8px;background:#f1f5e9;border:1px solid #e1e9d7;border-radius:5px}
+.sidebar-brand-note::before{content:'';display:block;width:4px;height:4px;border-radius:50%;background:#86a270}
+.sidebar .brand-link{margin-bottom:24px}
+.workspace-footer{align-items:center;gap:22px;padding-top:10px;border-top:1px solid #e6ebdf}
+.workspace-brand-signature{max-width:290px}
+.workspace-brand-signature.bs-compact .bs-logo{width:85px;height:30px}
+.workspace-footer>span{font-size:10px;line-height:1.6;color:#8a9a80;text-align:right}
+.login-brand-note{display:block;font-size:9px;letter-spacing:2px;color:#70855f;margin-top:20px;font-weight:500}
+.login-mobile-brand{display:none}
 
 @media(max-width:760px){
   /* Leave room for the work, with predictable navigation and finger-sized controls. */
@@ -10,9 +19,13 @@
   .notification-button i{right:10px;top:9px;width:7px;height:7px}
   .breadcrumbs{gap:5px;min-width:0}
   .breadcrumbs strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .breadcrumbs>strong{display:none}
+  .mobile-studio-brand{display:block;max-width:142px}
+  .mobile-studio-brand .brand{width:132px;height:38px}
   .sidebar{width:min(300px,calc(100vw - 48px));padding:18px 16px 0;overflow-y:auto;overscroll-behavior:contain}
   .sidebar .drawer-close{display:flex;position:absolute;right:10px;top:10px;width:44px;height:44px}
   .sidebar .brand-link{margin-right:40px;margin-bottom:22px}
+  .sidebar-brand-note{margin-top:6px;font-size:8px}
   .sidebar .brand.brand-logo{max-width:174px}
   .sidebar .nav-item,.sidebar .extra-tools .nav-item{min-height:47px;font-size:14px}
   .sidebar .sidebar-bottom{padding-top:16px}
@@ -50,6 +63,10 @@
   .connection-banner .btn{margin-left:28px;min-height:44px}
   .toast{max-width:calc(100vw - 24px);white-space:normal;bottom:calc(84px + env(safe-area-inset-bottom));line-height:1.5}
   .toast button{min-width:36px;min-height:36px}
+  .login-mobile-brand{display:block;margin-bottom:35px;max-width:285px}
+  .login-mobile-brand .bs-logo{width:118px;height:49px}
+  .login-mobile-brand .bs-copy strong{font-size:12px}
+  .login-mobile-brand .bs-copy span{font-size:10px}
   :is(.studio-workspace,.assistant-workspace) .topbar{height:48px}
   :is(.studio-workspace,.assistant-workspace) .breadcrumbs>strong{display:none}
   :is(.studio-workspace,.assistant-workspace) .mobile-studio-brand{display:block;max-width:142px}
@@ -61,6 +78,7 @@
 @media(max-width:380px){
   .topbar-actions{gap:0}
   .page-heading h1{font-size:27px}
+  .mobile-studio-brand .brand{width:116px}
   :is(.studio-workspace,.assistant-workspace) .mobile-studio-brand .brand{width:116px}
   .mobile-bottom-nav>button{font-size:10px}
 }

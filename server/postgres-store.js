@@ -274,6 +274,20 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
       if (typeof note !== 'string' || note.length > 20000) throw new AppError('Note must be text of at most 20,000 characters.');
       return (await run('SELECT potshaven_private.stock($1, $2::numeric, $3, $4, $5, $6, $7, $8) AS data', [id, quantity, type, jobId, note, actor, randomUUID(), new Date().toISOString()]))[0].data;
     },
+    async health() {
+      // Read each workspace table through the same connection used by real
+      // requests, without loading company records or image contents.
+      const row = (await run(`SELECT
+        (SELECT jsonb_typeof(value) FROM potshaven_private.metadata WHERE key = 'settings') AS settings_type,
+        (SELECT jsonb_typeof(data) FROM potshaven_private.records LIMIT 1) AS record_type,
+        (SELECT mime FROM potshaven_private.media LIMIT 1) AS media_type`))[0];
+      if (row?.settings_type !== 'object') {
+        const error = new Error('The workspace database settings are incomplete.');
+        error.code = 'WORKSPACE_SCHEMA_INVALID';
+        throw error;
+      }
+      return true;
+    },
     async state() {
       const row = (await run("SELECT coalesce((SELECT jsonb_object_agg(collection, items) FROM (SELECT collection, jsonb_agg(data ORDER BY sequence) AS items FROM potshaven_private.records GROUP BY collection) grouped), '{}'::jsonb) || jsonb_build_object('settings', coalesce((SELECT value FROM potshaven_private.metadata WHERE key = 'settings'), '{}'::jsonb)) AS state"))[0];
       return {...Object.fromEntries(collections.map(collection => [collection, []])), ...row.state};

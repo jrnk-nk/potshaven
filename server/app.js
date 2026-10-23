@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { fetch, EnvHttpProxyAgent } from 'undici';
 import { createStore, collections, AppError } from './store.js';
 import {decodeDesignReference, referenceUploads, instructionHistory, conversationPrompt} from './design-conversation.js';
+import {databaseFailure} from './database-diagnostics.js';
 
 const safeEqual = (left, right) => {
   const a = Buffer.from(String(left || '')), b = Buffer.from(String(right || ''));
@@ -101,7 +102,17 @@ export function createApp({
     }
     next();
   });
-  app.get('/api/health', (req, res) => res.json({ ok: true, demoMode, authenticated: Boolean(req.role), role: req.role, imageGenerationConfigured: Boolean(imageKey), imageModel, imageQuality, imageSize }));
+  app.get('/api/health', async (req, res) => {
+    try {
+      // A cached serverless app can outlive a database connection. Probe a
+      // real read on every request; never return company data from this route.
+      if (typeof store.health === 'function') await store.health();
+      else await store.settings();
+      res.json({ ok: true, database: 'connected', demoMode, authenticated: Boolean(req.role), role: req.role, imageGenerationConfigured: Boolean(imageKey), imageModel, imageQuality, imageSize });
+    } catch (error) {
+      res.status(503).json(databaseFailure(error));
+    }
+  });
   const failedLogins = new Map();
   app.post('/api/auth/login', (req, res, next) => {
     try {
@@ -277,7 +288,13 @@ export function createApp({
   }
   app.use((error, req, res, next) => {
     const status = error.status || (error.type === 'entity.too.large' ? 413 : 500);
-    if (status >= 500 && !(error instanceof AppError)) console.error('Request failed:', error.message);
+    const failure = databaseFailure(error);
+    if (!(error instanceof AppError) && failure.diagnostic !== 'UNKNOWN') {
+      return res.status(503).json(failure);
+    }
+    // Driver errors may contain passwords or connection strings, even when
+    // their code is unknown. Keep unexpected-failure logs free of raw errors.
+    if (status >= 500 && !(error instanceof AppError)) console.error('Unexpected request failure.');
     res.status(status).json({ error: status === 500 ? 'Something went wrong. Please try again.' : error.message });
   });
   app.locals.store = store;

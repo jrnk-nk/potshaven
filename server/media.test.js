@@ -30,7 +30,7 @@ test('uploaded plant photos use stable private media URLs instead of repeating b
   const media = await fetch(base + item.image);
   assert.equal(media.status, 200);
   assert.match(media.headers.get('content-type'), /^image\/png/);
-  assert.equal(media.headers.get('cache-control'), 'private, max-age=31536000, immutable');
+  assert.equal(media.headers.get('cache-control'), 'private, no-store');
   assert.deepEqual(Buffer.from(await media.arrayBuffer()), Buffer.from(png, 'base64'));
   const second = await fetch(`${base}/api/jobs/job-1`, { method: 'PATCH', headers: json, body: JSON.stringify({ photos: [picture], completionPhotos: [{ url: picture, caption: 'Finished garden' }] }) });
   const job = await second.json();
@@ -140,7 +140,7 @@ test('durable media validates file names and serves stored bytes behind authenti
   const cookie = login.headers.get('set-cookie').split(';')[0];
   const image = await fetch(base + url, { headers: { Cookie: cookie } });
   assert.equal(image.status, 200);
-  assert.equal(image.headers.get('cache-control'), 'private, max-age=31536000, immutable');
+  assert.equal(image.headers.get('cache-control'), 'private, no-store');
   assert.deepEqual(Buffer.from(await image.arrayBuffer()), Buffer.from(png, 'base64'));
   const head = await fetch(base + url, { method: 'HEAD', headers: { Cookie: cookie } });
   assert.equal(head.status, 200);

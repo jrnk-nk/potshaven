@@ -9,7 +9,7 @@ export type AppData = { [key: string]: any; places: RecordData[]; jobs: RecordDa
 const collections = ['places','jobs','inventory','stockMovements','workers','vehicles','contracts','payments','expenses','purchaseRequests','equipment','issues','careGuides','designs'];
 const empty: AppData = {places:[],jobs:[],inventory:[],workers:[],vehicles:[],contracts:[],payments:[],expenses:[],purchaseRequests:[],equipment:[],issues:[],careGuides:[],designs:[],stockMovements:[],settings:{}};
 type Connection = 'connecting' | 'online' | 'offline' | 'setup';
-type Context = { data: AppData; loading: boolean; refreshing: boolean; error: string; errorCode: string; connection: Connection; hasData: boolean; authenticated: boolean; refresh: () => Promise<void>; signIn: (role: string, password: string) => Promise<void>; create: (collection: string, payload: any) => Promise<any>; update: (collection: string, id: string, payload: any) => Promise<any>; remove: (collection: string, id: string) => Promise<void>; notify: (message: string) => void; openJob: (id?: string) => void; toast: string };
+type Context = { data: AppData; loading: boolean; refreshing: boolean; error: string; errorCode: string; connection: Connection; hasData: boolean; authenticated: boolean; refresh: () => Promise<void>; signIn: (role: string, password: string) => Promise<void>; signOut: () => Promise<void>; create: (collection: string, payload: any) => Promise<any>; update: (collection: string, id: string, payload: any) => Promise<any>; remove: (collection: string, id: string) => Promise<void>; notify: (message: string) => void; openJob: (id?: string) => void; toast: string };
 const AppContext = createContext<Context>(null!);
 function workspace(value: any): AppData {
   if (!value || typeof value !== 'object' || collections.some(key => !Array.isArray(value[key])) || !value.settings || typeof value.settings !== 'object' || Array.isArray(value.settings)) {
@@ -18,12 +18,13 @@ function workspace(value: any): AppData {
   return {...value,settings:withBrandDefaults(value.settings)};
 }
 const delay = (ms:number) => new Promise(resolve=>setTimeout(resolve,ms));
+function clearStudioDrafts(){try{for(const key of Object.keys(sessionStorage))if(key.startsWith('potshaven:studio-draft:'))sessionStorage.removeItem(key);localStorage.removeItem('potshaven:design-conversation');}catch{/* Private browser storage may be disabled. */}}
 export function AppProvider({children}: {children: React.ReactNode}) {
   const [data,setData] = useState<AppData>(empty), [loading,setLoading] = useState(true), [refreshing,setRefreshing] = useState(false), [error,setError] = useState(''), [errorCode,setErrorCode] = useState(''), [authenticated,setAuthenticated] = useState(true), [toast,setToast] = useState(''), [connection,setConnection] = useState<Connection>('connecting'), [hasData,setHasData] = useState(false);
-  const mounted=useRef(true), loaded=useRef(false), connectionRef=useRef<Connection>('connecting'), inFlight=useRef<Promise<void>|null>(null), flightEpoch=useRef(0), epoch=useRef(0), lastSuccess=useRef(0), retryTimer=useRef<ReturnType<typeof setTimeout>|null>(null), recoveryAttempts=useRef(0);
+  const mounted=useRef(true), loaded=useRef(false), connectionRef=useRef<Connection>('connecting'), inFlight=useRef<Promise<void>|null>(null), flightEpoch=useRef(0), epoch=useRef(0), lastSuccess=useRef(0), retryTimer=useRef<ReturnType<typeof setTimeout>|null>(null), recoveryAttempts=useRef(0), sessionVersion=useRef(0);
   const markConnection=(state:Connection)=>{connectionRef.current=state;setConnection(state);};
   const clearRetry=()=>{if(retryTimer.current){clearTimeout(retryTimer.current);retryTimer.current=null;}};
-  const expireSession=()=>{epoch.current++;loaded.current=false;activeCurrency='GHS';setData(empty);setHasData(false);setAuthenticated(false);setError('');setErrorCode('');markConnection('online');clearRetry();};
+  const expireSession=()=>{clearStudioDrafts();sessionVersion.current++;epoch.current++;loaded.current=false;activeCurrency='GHS';setData(empty);setHasData(false);setAuthenticated(false);setError('');setErrorCode('');markConnection('online');clearRetry();};
   const refresh = useCallback(():Promise<void> => {
     if(inFlight.current&&flightEpoch.current===epoch.current) return inFlight.current;
     clearRetry();
@@ -63,10 +64,14 @@ export function AppProvider({children}: {children: React.ReactNode}) {
     // A successful login establishes the session even if loading its company
     // data fails. Start a fresh read so a pre-login 401 cannot replace it, and
     // show workspace recovery rather than silently returning to the password.
-    epoch.current++;loaded.current=false;lastSuccess.current=0;clearRetry();
+    clearStudioDrafts();sessionVersion.current++;epoch.current++;loaded.current=false;lastSuccess.current=0;clearRetry();
     setData(empty);setHasData(false);setError('');setErrorCode('');
     setAuthenticated(true);setLoading(true);markConnection('connecting');
     await refresh();
+  };
+  const signOut=async()=>{
+    await api('/auth/logout',{method:'POST'});
+    expireSession();
   };
   useEffect(()=>{
     mounted.current=true;void refresh();
@@ -78,7 +83,9 @@ export function AppProvider({children}: {children: React.ReactNode}) {
   useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(''),4500);return()=>clearTimeout(timer);},[toast]);
   const mutate=async(path:string,options:RequestInit)=>{
     if(connectionRef.current!=='online')throw new ApiError('Reconnect before saving changes. Your last loaded records are still available to view.',{code:'OFFLINE_WRITE_BLOCKED'});
-    try{return await api(path,options);}catch(caught){
+    const version=sessionVersion.current;
+    try{const result=await api(path,options);if(version!==sessionVersion.current)throw new ApiError('Your account changed before this request finished.',{code:'SESSION_CHANGED'});return result;}catch(caught){
+      if(version!==sessionVersion.current)throw new ApiError('Your account changed before this request finished.',{code:'SESSION_CHANGED'});
       if(caught instanceof ApiError&&caught.status===401)expireSession();
       else if(caught instanceof ApiError&&caught.retryable){setError(caught.message);setErrorCode(caught.code);markConnection('offline');clearRetry();retryTimer.current=setTimeout(()=>{retryTimer.current=null;if(mounted.current)void refresh();},1500);}
       throw caught;
@@ -96,16 +103,18 @@ export function AppProvider({children}: {children: React.ReactNode}) {
       return {...current,[collection]:exists?records.map(item=>item.id===result.id?result:item):[...records,result]};
     });
   };
-  const create=async(collection:string,payload:any)=>{const result=await mutate(`/${collection}`,{method:'POST',body:JSON.stringify(payload)});reconcile(collection,result);return result;};
+  const ensureSession=(version:number)=>{if(version!==sessionVersion.current)throw new ApiError('Your account changed before this request finished.',{code:'SESSION_CHANGED'});};
+  const create=async(collection:string,payload:any)=>{const version=sessionVersion.current;const result=await mutate(`/${collection}`,{method:'POST',body:JSON.stringify(payload)});ensureSession(version);reconcile(collection,result);return result;};
   const update=async(collection:string,id:string,payload:any)=>{
-    const result=await mutate(`/${collection}${id?`/${encodeURIComponent(id)}`:''}`,{method:'PATCH',body:JSON.stringify(payload)});reconcile(collection,result);
+    const version=sessionVersion.current;
+    const result=await mutate(`/${collection}${id?`/${encodeURIComponent(id)}`:''}`,{method:'PATCH',body:JSON.stringify(payload)});ensureSession(version);reconcile(collection,result);
     // These operations also create a follow-up job or stock-ledger entry.
     if((collection==='jobs'&&payload.status==='Completed')||(collection==='inventory'&&payload.quantity!==undefined)){await refresh();}
     return result;
   };
-  const remove=async(collection:string,id:string)=>{await mutate(`/${collection}/${encodeURIComponent(id)}`,{method:'DELETE'});reconcile(collection,null,id);};
+  const remove=async(collection:string,id:string)=>{const version=sessionVersion.current;await mutate(`/${collection}/${encodeURIComponent(id)}`,{method:'DELETE'});ensureSession(version);reconcile(collection,null,id);};
   const openJob=(id?:string)=>window.dispatchEvent(new CustomEvent('potshaven:job',{detail:id}));
-  return <AppContext.Provider value={{data,loading,refreshing,error,errorCode,connection,hasData,authenticated,refresh,signIn,create,update,remove,notify:setToast,openJob,toast}}>{children}</AppContext.Provider>;
+  return <AppContext.Provider value={{data,loading,refreshing,error,errorCode,connection,hasData,authenticated,refresh,signIn,signOut,create,update,remove,notify:setToast,openJob,toast}}>{children}</AppContext.Provider>;
 }
 export const useApp=()=>useContext(AppContext);
 export const today=()=>new Date().toLocaleDateString('en-CA',{timeZone:'Africa/Accra'});

@@ -212,6 +212,32 @@ try {
   await expect(assistant.getByText('Hotel entrance care needs a crew', {exact: true})).toBeVisible();
   assert.deepEqual(runtimeErrors, []);
   console.log('PASS the attention list remains available without an AI key while paid assistant requests are disabled');
+
+  state.assistantConfigured = true;
+  await page.setViewportSize({width: 1440, height: 1000});
+  await page.reload();
+  await expect(composer).toBeVisible();
+  response = {reply: 'Owner-only salary review details.', actions: []};
+  holdReply = true; releaseReply = undefined;
+  await composer.fill('Review confidential owner agreements.');
+  await send.click();
+  await expect.poll(() => typeof releaseReply).toBe('function');
+  state.role = 'manager';
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(assistant.getByText('Plan visits. Assign your team. Follow up on unfinished work.', {exact: true})).toBeVisible();
+  holdReply = false; releaseReply();
+  await page.waitForTimeout(200);
+  await expect(assistant.getByText('Owner-only salary review details.', {exact: true})).toHaveCount(0);
+  await expect(assistant.getByText('Review confidential owner agreements.', {exact: true})).toHaveCount(0);
+  await expect(composer).toHaveValue('');
+  response = {reply: 'Your operational work is ready to review.', actions: []};
+  await composer.fill('What jobs need attention?');
+  await send.click();
+  await expect(assistant.getByText(response.reply, {exact: true})).toBeVisible();
+  assert.deepEqual(requests.at(-1).history, [], 'A manager conversation must not include earlier owner chat.');
+  assert.deepEqual(runtimeErrors, []);
+  console.log('PASS a role change clears earlier owner chat and discards late owner responses before manager use');
+
 } finally {
   await browser.close();
   await vite.close();

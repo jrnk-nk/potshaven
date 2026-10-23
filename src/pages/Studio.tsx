@@ -60,11 +60,20 @@ async function downloadBranded(design: Row, settings: Row) {
   const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = `${(design.title || 'potshaven-design').replace(/[^a-zA-Z0-9 _-]/g, '').trim() || 'design'}.png`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function OwnerOnlyStudio() {return <section className="panel" style={{padding: 28}} aria-label="Owner access required"><h1 style={{fontFamily: 'var(--font-display)', fontWeight: 400}}>Owner access required</h1><p className="muted">This area is available in the owner’s workspace.</p><a className="btn btn-secondary" href="#overview">Back to your working day</a></section>;}
+
 export function StudioPage() {
+  const {data} = useApp();
+  if (data.role !== 'owner') return <OwnerOnlyStudio/>;
   return <DesignChat downloadBranded={downloadBranded} />;
 }
 
 export function PortfolioPage() {
+  const {data} = useApp();
+  return data.role === 'owner' ? <OwnerPortfolioPage/> : <OwnerOnlyStudio/>;
+}
+
+function OwnerPortfolioPage() {
   const { data, create, update, notify } = useApp();
   const settings = data.settings || {}, places: Row[] = data.places || [], rawDesigns: Row[] = data.designs || [], jobs: Row[] = data.jobs || [];
   const designsById = new Map(rawDesigns.map(design => [design.id, design]));
@@ -97,14 +106,33 @@ export function PortfolioPage() {
 }
 
 export function SettingsPage() {
-  const { data, refresh, notify } = useApp();
+  const {data} = useApp();
+  return data.role === 'owner' ? <CompanySettingsPage/> : <ManagerAccountPage/>;
+}
+
+function ManagerAccountPage() {
+  const {data, signOut: endSession} = useApp();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function signOut() {
+    if (busy) return;
+    setBusy(true); setError('');
+    try {await endSession();}
+    catch (caught) {setError(errorMessage(caught));}
+    finally {setBusy(false);}
+  }
+  return <><Styles/><section className="studio-card studio-card-pad" aria-label="Manager account" style={{maxWidth: 650, margin: '0 auto'}}><BrandSignature settings={data.settings || {}} compact/><div className="studio-heading" style={{marginTop: 28}}><div><span className="studio-eyebrow">DAILY OPERATIONS</span><h1>Your account</h1><p>Your access to the day’s work.</p></div><span className="studio-pill"><ShieldCheck size={12} style={{verticalAlign: 'middle', marginRight: 5}}/>Manager</span></div><p className="studio-settings-sub">You are signed in as the manager. Plan visits, assign approved people and vehicles, record stock usage, and keep the work up to date.</p><div className="studio-notice"><div><strong>Company administration is managed by the owner.</strong>Contact the owner when you need your access changed.</div></div>{data.demoMode && <p className="studio-hint">This is a demonstration workspace with sample records.</p>}{error && <p className="studio-error" role="alert">{error}</p>}<button type="button" className="btn btn-secondary" onClick={() => void signOut()} disabled={busy}>{busy ? 'Signing out…' : 'Sign out'}</button></section></>;
+}
+
+function CompanySettingsPage() {
+  const { data, refresh, notify, signIn, signOut } = useApp();
   const [form, setForm] = useState<Row>({}), [saving, setSaving] = useState(false), [error, setError] = useState(''), [switching, setSwitching] = useState(false), [preparing, setPreparing] = useState(false);
-  const isOwner = !data.role || data.role === 'owner';
+  const isOwner = data.role === 'owner';
   const settingsKey = JSON.stringify(data.settings || {});
   useEffect(() => { setForm({ companyName: 'PotsHaven', tagline: 'Thoughtfully designed. Beautifully cared for.', ownerName: '', accentColor: '#234e3e', watermark: 'Designed by PotsHaven', currency: 'GHS', ...JSON.parse(settingsKey) }); }, [settingsKey]);
   const change = (key: string, value: string) => setForm(old => ({ ...old, [key]: value }));
   async function upload(e: ChangeEvent<HTMLInputElement>) { const file = e.target.files?.[0]; if (!file) return; setPreparing(true); try { setError(''); change('logo', await readImage(file, true)); } catch (error) { setError(errorMessage(error)); } finally { setPreparing(false); } }
-  async function sessionAction(role?: string) { setSwitching(true); setError(''); try { await requestJSON(role ? '/api/auth/login' : '/api/auth/logout', role ? { role } : {}); await refresh(); if (role) notify(`Exploring the demo as ${role}.`); } catch (e) { setError(errorMessage(e)); } finally { setSwitching(false); } }
+  async function sessionAction(role?: string) { setSwitching(true); setError(''); try { if (role) {await signIn(role, ''); notify(`Exploring the demo as ${role}.`);} else await signOut(); } catch (e) { setError(errorMessage(e)); } finally { setSwitching(false); } }
   async function save(e: FormEvent) { e.preventDefault(); setSaving(true); setError(''); try { await requestJSON('/api/settings', form, 'PATCH'); await refresh(); notify('Your company settings are saved.'); } catch (error) { setError(errorMessage(error)); } finally { setSaving(false); } }
   return <><Styles /><div className="studio-heading"><div><span className="studio-eyebrow">Make yourself at home</span><h1>Your company, your touch</h1><p>A few thoughtful details to make this space feel like yours.</p></div><span className="studio-pill"><ShieldCheck size={11} style={{ verticalAlign: 'middle', marginRight: 5 }} />{isOwner ? 'Owner workspace' : 'Manager workspace'}</span></div>
     {!isOwner && <div className="studio-notice"><div><strong>Company settings are managed by the owner.</strong>You can view the branding and connection status here.</div></div>}

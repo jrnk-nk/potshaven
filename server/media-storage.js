@@ -22,7 +22,7 @@ export function createMediaStorage(store) {
         if (!match) throw new AppError('Image not found.', 404);
         const image = await store.getMedia(key);
         if (!image || image.contentType !== contentTypes[match[1]] || !Buffer.isBuffer(image.bytes)) throw new AppError('Image not found.', 404);
-        res.set('Cache-Control', 'private, max-age=31536000, immutable').type(image.contentType).send(image.bytes);
+        res.set('Cache-Control', 'private, no-store').vary('Cookie').type(image.contentType).send(image.bytes);
       } catch (error) { next(error); }
     },
   };

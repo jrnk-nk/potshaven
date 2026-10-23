@@ -1,6 +1,6 @@
 # PotsHavenGh
 
-A simple landscaping and decorating workspace for the owner and manager. Workers receive instructions through WhatsApp. The everyday menu is **Home, Schedule, Places, Inventory, and Design studio**; the Company assistant, projects, team, finance and reports are under **More tools**. On mobile, the studio and assistant use a compact header, larger controls, and a fixed message box.
+A simple landscaping and decorating workspace for the owner and manager. Workers receive instructions through WhatsApp. The owner’s menu emphasizes **Home, Projects, Business, Team & vehicles, and Design studio**. The manager’s menu is **Today, Schedule, Places, Inventory, and Team & vehicles**, with operational projects and the assistant under More. Studio, gallery, portfolio, finances, hiring, pay, approvals, and company settings are owner-only. On mobile, the studio and assistant use a compact header, larger controls, and a fixed message box.
 
 ![PotsHavenGh workspace](docs/overview.png)
 
@@ -41,6 +41,8 @@ npm run test:auth        # Owner/manager sign-in, expiry and workspace-load reco
 npm run test:assistant   # Grounded attention, reviewed changes, failures and mobile layout
 npm run test:workforce   # External worker agreements, assignments, WhatsApp and persistence
 npm run test:manager     # Daily brief, operational reminders, assignments and mobile layout
+npm run test:manager-access # Authenticated UI/API role boundaries and operational work
+npm run test:roles-home  # Distinct homes, owner totals, account screens and studio guards
 ```
 
 Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwright install chromium` or set `CHROMIUM_PATH`. Tests use temporary databases and servers, leaving company records alone. PostgreSQL tests run SQL against PGlite; they do not require or provision a live Supabase account.
@@ -55,13 +57,13 @@ Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwr
 - Company staff and external workers with daily, weekly, fixed-term, or job-completion agreements. Save agreement dates, rates, signed references, and work instructions; job assignments flag availability and other visits on the same day. Rates are agreement records, not recorded payments.
 - A Company assistant that answers from saved business records and prepares job, worker, vehicle, and issue changes for review. Save each change explicitly. Its attention list checks overdue jobs, unchecked completion tasks, missing assignments, low stock, and expiring agreements without a model call.
 - Maintenance contracts, payments, expenses, client issues, branded service reports and a portfolio.
-- A gallery that opens first in the studio: one chosen or latest image per space, with search and favourites. Open a space to attach photos and refine the idea in its own chat. The latest idea stays visible; earlier work is tucked behind one control. Earlier versions stay available for editing, portfolio sharing and branded downloads. Rename, link places, favourite, and choose the gallery image; compare the original photo with a design. Client presentation mode shows only the friendly space title, image, and company branding. Gallery/portfolio captions and downloaded filenames omit raw instructions and provider/model details. Quick edits fill a draft for review, including a prompt based on plants actually in stock. Unsent text survives a reload in the current browser tab; in-tab space switching keeps each space’s draft and photos separate. Photo attachments must be re-added after a reload. Include measurements directly in the message when useful; concepts are not construction drawings.
+- A gallery that opens first in the studio: one chosen or latest image per space, with search and favourites. Open a space to attach photos and refine the idea in its own chat. The latest idea stays visible; earlier work is tucked behind one control. Earlier versions stay available for editing, portfolio sharing and branded downloads. Rename, link places, favourite, and choose the gallery image; compare the original photo with a design. Client presentation mode shows only the friendly space title, image, and company branding. Gallery/portfolio captions and downloaded filenames omit raw instructions and provider/model details. Quick edits fill a draft for review, including a prompt based on plants actually in stock. Unsent text survives a reload in the current signed-in browser tab (sign-out or an account change clears it); in-tab space switching keeps each space’s draft and photos separate. Photo attachments must be re-added after a reload. Include measurements directly in the message when useful; concepts are not construction drawings.
 
 AI replies and concepts need the configured provider key, model access, and billing. Automated tests mock provider requests and do not verify a paid generation against the live account. Reminders are in-app. Email, automatic WhatsApp sending and route optimisation are not configured.
 
 ## Loading and recovery
 
-Pages load on demand. Ordinary changes update the affected record without fetching the entire company again. Uploaded photos are resized before sending, stored separately, and privately cached. Temporary read failures retry automatically; a later interruption keeps already loaded records visible and prevents saves until reconnected. Writes are never automatically retried, avoiding duplicate stock deductions.
+Pages load on demand. Ordinary changes update the affected record without fetching the entire company again. Uploaded photos are resized before sending, stored separately, and served with role checks. Temporary read failures retry automatically; a later interruption keeps already loaded records visible and prevents saves until reconnected. Writes are never automatically retried, avoiding duplicate stock deductions.
 
 Database health checks perform actual reads on every request. After an accepted sign-in, a failed workspace load shows the connection error and a retry button; retrying does not require submitting the password again. Expired sessions clear private records and return to sign-in.
 
@@ -71,4 +73,4 @@ A [Dockerfile](Dockerfile) and [Render blueprint](render.yaml) remain available 
 
 Details: [API](server/API.md) · [PostgreSQL adapter](server/POSTGRES.md) · [Supabase setup](SUPABASE_SETUP.md).
 
-The [owner/manager workspace split](docs/ROLE_WORKSPACES_PROPOSAL.md) is a proposal awaiting user review. It is not an implemented permission change. Existing role authorization remains in place.
+The [owner/manager access rules](docs/ROLE_WORKSPACES.md) apply to the interface, API, returned records, assistant context/actions, and private images. Manager operational updates preserve hidden owner fields. Separate sign-in roles receive different workspaces; account changes discard stale private replies.

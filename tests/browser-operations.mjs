@@ -73,6 +73,7 @@ try{
  await expect(page.getByRole('dialog')).toHaveCount(0);
  await expect(page.getByRole('heading',{name:prefix+' Gardener'})).toBeVisible();
  console.log('PASS crew profile and skills');
+ if(!(await page.getByRole('button',{name:/^Schedule(?: & routes)?$/}).first().isVisible())) await page.getByRole('button',{name:'More tools',exact:true}).click();
  await page.getByRole('button',{name:/^Schedule(?: & routes)?$/}).first().click();
  await page.getByRole('button',{name:'Schedule a visit',exact:true}).click();
  await expect(page.getByLabel('Status',{exact:true})).not.toBeVisible();

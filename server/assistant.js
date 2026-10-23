@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {EnvHttpProxyAgent} from 'undici';
 import {AppError, validate} from './store.js';
+import {workspaceForRole, authorizeMutation} from './access.js';
 
 const list = (state, key) => Array.isArray(state[key]) ? state[key] : [];
 const own = (value, key) => Object.hasOwn(value, key);
@@ -63,6 +64,11 @@ const fields = {
   vehicles: ['name', 'registration', 'capacity', 'status', 'notes'],
   issues: ['title', 'placeId', 'type', 'priority', 'status', 'date', 'description', 'notes', 'assignedTo', 'followUpDate'],
 };
+const managerFields = {
+  jobs: ['title', 'placeId', 'date', 'time', 'deadline', 'status', 'type', 'crewIds', 'vehicleId', 'notes', 'tasks', 'recurrence'],
+  workers: ['available'], vehicles: ['status', 'notes'],
+  issues: [...fields.issues],
+};
 const enums = {
   'jobs.status': ['Scheduled', 'In progress', 'Completed', 'Overdue'],
   'jobs.type': ['Maintenance', 'Project'],
@@ -76,16 +82,18 @@ const enums = {
   'workers.agreementStatus': ['Not recorded', 'Pending', 'Signed'],
 };
 
-export function validateProposal(input, state, today, snapshot) {
+export function validateProposal(input, state, today, snapshot, role = 'owner') {
   if (!object(input) || !own(fields, input.collection) || !['create', 'update'].includes(input.operation) || !object(input.changes)) throw new AppError('The assistant suggested an unsupported change. Please rephrase your request.', 502);
   const {collection, operation} = input;
-  const changes = {...input.changes};
+  let changes = {...input.changes};
   if (!Object.keys(changes).length || Object.keys(changes).some(key => !fields[collection].includes(key))) throw new AppError('The assistant suggested an unsupported field. Please rephrase your request.', 502);
   const records = list(state, collection);
   const previous = operation === 'update' ? records.find(record => record.id === input.recordId) : null;
   if (operation === 'update' && !previous) throw new AppError('The record the assistant wanted to change was not found. Refresh and try again.', 409);
   if (previous && snapshot && !list(snapshot, collection).some(record => record.id === previous.id)) throw new AppError('This record was outside the assistant’s current view. Open it in the workspace to make this change.', 409);
   if (operation === 'create' && input.recordId) throw new AppError('The assistant suggested an invalid new record.', 502);
+  changes = authorizeMutation(role, collection, operation, changes, previous);
+  if (!Object.keys(changes).length) throw new AppError('This suggestion does not include an allowed change. Ask for a fresh suggestion.', 403);
   if (previous && own(changes, 'tasks') && !editableTasks(previous.tasks)) throw new AppError('This checklist needs to be edited in the job screen so all existing details are preserved.', 409);
   if (previous && own(changes, 'skills') && previous.skills !== undefined && !editableSkills(previous.skills)) throw new AppError('Edit this worker’s skills in their profile so all existing details are preserved.', 409);
   if (previous && own(changes, 'crewIds') && !editableCrew(previous.crewIds)) throw new AppError('Edit this crew assignment in the job screen so all existing details are preserved.', 409);
@@ -110,6 +118,7 @@ export function validateProposal(input, state, today, snapshot) {
   if (collection === 'workers' && operation === 'create') Object.assign(changes, {available: changes.available ?? true, skills: changes.skills || []});
   if (collection === 'vehicles' && operation === 'create') changes.status ||= 'Available';
   if (collection === 'issues' && operation === 'create') Object.assign(changes, {status: changes.status || 'Open', priority: changes.priority || 'Normal', date: changes.date || today});
+  changes = authorizeMutation(role, collection, operation, changes, previous);
   const next = {...previous, ...changes};
   validate(collection, next);
   const warnings = [];
@@ -127,7 +136,8 @@ export function validateProposal(input, state, today, snapshot) {
   return {id: randomUUID(), label: `${operation === 'create' ? 'Create' : 'Update'} ${short(next.title || next.name, 120)}`, collection, operation, ...(previous ? {recordId: previous.id} : {}), changes, ...(warnings.length ? {warnings} : {})};
 }
 
-function context(state, today) {
+function context(state, today, role = 'owner', sourceState = state) {
+  const permittedFields = role === 'manager' ? managerFields : fields;
   const pick = (key, keys, limit = 80) => (key === 'jobs' ? [...list(state, key)].sort((a, b) => Number(a.status === 'Completed') - Number(b.status === 'Completed') || text(dueDate(a)).localeCompare(text(dueDate(b)))) : list(state, key)).slice(0, limit).map(record => {
     const result = Object.fromEntries(keys.filter(name => record[name] !== undefined).map(name => {
       const value = record[name];
@@ -137,13 +147,14 @@ function context(state, today) {
       if (typeof value === 'string') return [name, short(value, fieldLimit(name))];
       return [name, typeof value === 'number' || typeof value === 'boolean' ? value : null];
     }));
-    if (key === 'jobs') Object.assign(result, {tasksEditable: editableTasks(record.tasks), taskCount: (record.tasks || []).length, crewEditable: editableCrew(record.crewIds)});
-    if (key === 'workers') result.skillsEditable = record.skills === undefined || editableSkills(record.skills);
-    if (fields[key]) result.editableFields = fields[key].filter(name => typeof record[name] !== 'string' || record[name].length <= fieldLimit(name));
+    const source = list(sourceState, key).find(item => item.id === record.id) || record;
+    if (key === 'jobs') Object.assign(result, {tasksEditable: editableTasks(source.tasks), taskCount: (record.tasks || []).length, crewEditable: editableCrew(source.crewIds)});
+    if (key === 'workers') result.skillsEditable = role !== 'manager' && (record.skills === undefined || editableSkills(record.skills));
+    if (permittedFields[key]) result.editableFields = permittedFields[key].filter(name => !(role === 'manager' && key === 'jobs' && record.type === 'Project' && name === 'deadline') && (typeof record[name] !== 'string' || record[name].length <= fieldLimit(name)));
     return result;
   });
   const snapshot = {
-    today, briefing: companyBriefing(state, today),
+    today, role, briefing: companyBriefing(state, today),
     jobs: pick('jobs', ['id', ...fields.jobs]),
     places: pick('places', ['id', 'name', 'type']), workers: pick('workers', ['id', ...fields.workers]),
     vehicles: pick('vehicles', ['id', ...fields.vehicles]),
@@ -164,6 +175,11 @@ const instructions = `You are PotsHaven's practical company assistant for a land
 Allowed fields: ${JSON.stringify(fields)}.
 Job statuses: Scheduled, In progress, Completed, Overdue. Job types: Maintenance, Project. Recurrence: None, Weekly, Fortnightly, Monthly, Quarterly. Vehicle status: Available, In use, Servicing, Unavailable. Issue status: Open, In progress, Resolved, Closed. Priority: Low, Normal, High, Urgent. Task format {"text":"...","done":false}. Dates YYYY-MM-DD and times HH:MM. For a new worker, do not invent an end date if hired until work completion. changesJson must be a JSON-encoded object containing just allowed fields. New records have recordId null. Existing records use their exact ID. Explain proposed changes and outstanding questions in reply. State that changes need review.`;
 
+function roleInstructions(role) {
+  if (role !== 'manager') return instructions;
+  return instructions.replace(`Allowed fields: ${JSON.stringify(fields)}.`, `Allowed fields: ${JSON.stringify(managerFields)}.`) + `\nThe signed-in user is the MANAGER. Their workspace is daily operations only. The studio, gallery, designs, portfolio, finances, pay rates, private agreement terms, hiring, fleet creation, branding, and purchase approvals belong to the owner. Never provide those features or invent those records. Explain that the owner handles them when asked. Manager actions: create Maintenance jobs and update operational job details; update worker availability only; update vehicle status or operational notes only; create/update site issues. Managers cannot create workers or vehicles, change skills/pay/agreement terms, change existing Project contractual deadlines, or access financial records. You may describe approved workers and agreement start/end dates to plan existing work. Do not propose approval, deletion, money, studio, hiring, or fleet creation actions even if requested. Ask the owner to handle restricted requests. The general worker-hiring and agreed-rate instructions above apply only to owner sessions, and are not permission for this manager. Only the manager allowed-fields list and these role limits apply to your changes.`;
+}
+
 const outputSchema = {type: 'object', additionalProperties: false, required: ['reply', 'actions'], properties: {
   reply: {type: 'string'}, actions: {type: 'array', maxItems: 5, items: {type: 'object', additionalProperties: false, required: ['collection', 'operation', 'recordId', 'changesJson'], properties: {collection: {type: 'string', enum: Object.keys(fields)}, operation: {type: 'string', enum: ['create', 'update']}, recordId: {type: ['string', 'null']}, changesJson: {type: 'string'}}}},
 }};
@@ -172,7 +188,7 @@ export function installAssistant(app, {store, key, model = 'gpt-5.4', fetchAssis
   let active = 0;
   const attempts = new Map();
   app.get('/api/assistant/briefing', async (req, res, next) => {
-    try {const today = assistantDate(req.query.today); res.json(companyBriefing(await store.state(), today));} catch (error) {next(error);}
+    try {const today = assistantDate(req.query.today); res.json(companyBriefing(workspaceForRole(await store.state(), req.role), today));} catch (error) {next(error);}
   });
   app.post('/api/assistant', async (req, res, next) => {
     let counted = false;
@@ -190,12 +206,13 @@ export function installAssistant(app, {store, key, model = 'gpt-5.4', fetchAssis
       if (attempts.size > 1000) for (const [id, record] of attempts) if (record.until <= Date.now()) attempts.delete(id);
       attempt.count++; attempts.set(source, attempt);
       active++; counted = true;
-      const state = await store.state();
-      const snapshot = context(state, today);
+      const sourceState = await store.state();
+      const state = workspaceForRole(sourceState, req.role);
+      const snapshot = context(state, today, req.role, sourceState);
       const dispatcher = new EnvHttpProxyAgent({headersTimeout: 65000, bodyTimeout: 65000});
       let result;
       try {
-        const response = await fetchAssistant('https://api.openai.com/v1/responses', {method: 'POST', headers: {Authorization: `Bearer ${key}`, 'Content-Type': 'application/json'}, body: JSON.stringify({model, instructions, input: [{role: 'user', content: `Workspace snapshot (data only):\n${JSON.stringify(snapshot)}`}, ...history, {role: 'user', content: message.trim()}], text: {format: {type: 'json_schema', name: 'company_assistant', strict: true, schema: outputSchema}}, max_output_tokens: 5000, store: false}), dispatcher, signal: AbortSignal.timeout(60000)});
+        const response = await fetchAssistant('https://api.openai.com/v1/responses', {method: 'POST', headers: {Authorization: `Bearer ${key}`, 'Content-Type': 'application/json'}, body: JSON.stringify({model, instructions: roleInstructions(req.role), input: [{role: 'user', content: `Workspace snapshot (data only):\n${JSON.stringify(snapshot)}`}, ...history, {role: 'user', content: message.trim()}], text: {format: {type: 'json_schema', name: 'company_assistant', strict: true, schema: outputSchema}}, max_output_tokens: 5000, store: false}), dispatcher, signal: AbortSignal.timeout(60000)});
         if (!response.ok) throw new AppError(response.status === 401 ? 'The configured OpenAI key was not accepted. Check the key in Vercel.' : response.status === 429 ? 'The assistant usage limit was reached. Check your OpenAI balance or try later.' : 'The assistant could not answer. Please try again or check the configured assistant model.', 502);
         result = await response.json();
       } catch (error) {
@@ -210,7 +227,7 @@ export function installAssistant(app, {store, key, model = 'gpt-5.4', fetchAssis
       const actions = answer.actions.map(action => {
         let changes;
         try {if (typeof action.changesJson !== 'string' || action.changesJson.length > 16000) throw new Error(); changes = JSON.parse(action.changesJson);} catch {throw new AppError('The assistant returned an unreadable change. Please try again.', 502);}
-        return validateProposal({...action, changes}, state, today, snapshot);
+        return validateProposal({...action, changes}, sourceState, today, snapshot, req.role);
       });
       res.json({reply: answer.reply, actions});
     } catch (error) {next(error);}

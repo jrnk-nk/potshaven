@@ -82,3 +82,13 @@
   :is(.studio-workspace,.assistant-workspace) .mobile-studio-brand .brand{width:116px}
   .mobile-bottom-nav>button{font-size:10px}
 }
+
+.owner-shell .sidebar-brand-note{background:#315b43;border-color:#315b43;color:#f8faf3;letter-spacing:1.4px}
+.owner-shell .sidebar-brand-note::before{background:#d0dcb8}
+.manager-shell .sidebar-brand-note{letter-spacing:1.4px}
+.owner-area-notice{max-width:660px;margin:45px auto;padding:42px;text-align:center;border:1px solid #dde7d4;background:#fbfdf7}
+.owner-area-mark{display:grid;place-items:center;width:66px;height:66px;margin:0 auto 24px;border-radius:21px;background:#e9f1e0;color:#6b885a}
+.owner-area-notice h1{font-family:var(--font-display);font-weight:400;font-size:32px;color:#36593b;margin:12px 0}
+.owner-area-notice>p:not(.eyebrow){font-size:14px;line-height:1.8;color:#7b8971;max-width:420px;margin:0 auto 24px}
+.owner-area-notice .btn{margin:auto}
+@media(max-width:760px){.owner-area-notice{padding:28px 20px;margin:22px 0}.owner-area-notice h1{font-size:28px}.owner-area-notice>p:not(.eyebrow){font-size:13px}.owner-area-notice .btn{width:100%;justify-content:center}}

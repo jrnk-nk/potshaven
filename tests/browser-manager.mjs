@@ -36,6 +36,8 @@ const page = await browser.newPage({viewport: {width: 390, height: 844}});
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 await page.addInitScript(() => {Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {writeText: async value => {window.__copiedPlan = value;}}});});
 try {
+  const managerLogin = await page.request.post(`${baseURL}/api/auth/login`, {data: {role: 'manager'}});
+  assert.equal(managerLogin.status(), 200);
   await page.goto(`${baseURL}/#overview`);
   await expect(page.getByRole('heading', {name: 'Today at a glance', exact: true})).toBeVisible();
   await expect(page.locator('.md-job')).toHaveCount(1);

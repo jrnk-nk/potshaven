@@ -20,7 +20,7 @@ const fixture=role=>({...Object.fromEntries(collections.map(key=>[key,[]])),plac
 async function sessionPage() {
  const page=await browser.newPage({viewport:{width:1280,height:900}});
  page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));
- const session={signedIn:false,role:'owner',failState:false,loginCalls:0,stateCalls:0,pendingStale:null};
+ const session={signedIn:false,role:'owner',failState:false,loginCalls:0,stateCalls:0,pendingStale:null,pendingCreate:null};
  await page.route('**/api/**',async route=>{
   const request=route.request();const path=new URL(request.url()).pathname;
   const reply=(status,body)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
@@ -29,6 +29,8 @@ async function sessionPage() {
    if(body.password!=='fixture-password')return reply(401,{error:'Incorrect password or role is not configured.'});
    session.signedIn=true;session.role=body.role;return reply(200,{role:body.role,demoMode:false});
   }
+  if(path==='/api/auth/logout') {session.signedIn=false;return reply(200,{ok:true});}
+  if(path==='/api/places'&&request.method()==='POST'&&session.pendingCreate){const pending=session.pendingCreate;session.pendingCreate=null;await pending.promise;return reply(201,{...request.postDataJSON(),id:'late-owner-record',client:'Owner-only financial agreement',budget:12345});}
   if(path==='/api/state') {
    session.stateCalls++;
    if(session.pendingStale){const pending=session.pendingStale;session.pendingStale=null;await pending.promise;return reply(401,{error:'Please sign in to continue.'});}
@@ -96,6 +98,41 @@ try {
  assert.equal(stale.session.loginCalls,1);
  console.log('PASS an earlier unauthorized request cannot discard a newly accepted session');
  await stale.page.close();
+
+ const signingOut=await sessionPage();await login(signingOut.page,'manager');
+ await expect(signingOut.page.getByRole('heading',{name:'Places & clients',exact:true})).toBeVisible();
+ await signingOut.page.goto(origin+'/#settings');
+ await expect(signingOut.page.getByRole('heading',{name:'Your account',exact:true})).toBeVisible();
+ await signingOut.page.evaluate(()=>sessionStorage.setItem('potshaven:studio-draft:private-owner-space','Private owner idea'));
+ signingOut.session.failState=true;
+ await signingOut.page.getByRole('button',{name:'Sign out',exact:true}).click();
+ await expect(signingOut.page.getByRole('heading',{name:'Welcome back.'})).toBeVisible();
+ await expect(signingOut.page.getByText('Private hotel',{exact:true})).toHaveCount(0);
+ assert.equal(await signingOut.page.evaluate(()=>sessionStorage.getItem('potshaven:studio-draft:private-owner-space')),null);
+ console.log('PASS successful sign-out clears private cached records and studio drafts without requiring another workspace read');
+ await signingOut.page.close();
+
+ const switched=await sessionPage();await login(switched.page);
+ await expect(switched.page.getByRole('heading',{name:'Places & clients',exact:true})).toBeVisible();
+ let releaseCreate;
+ const createPromise=new Promise(resolve=>{releaseCreate=resolve;});switched.session.pendingCreate={promise:createPromise};
+ await switched.page.getByRole('button',{name:'Add a place',exact:true}).click();
+ await switched.page.getByLabel('Place name',{exact:true}).fill('Owner-only late place');
+ await switched.page.getByLabel('Client / company',{exact:true}).fill('Owner-only client');
+ await switched.page.getByLabel('Address or location',{exact:true}).fill('Accra');
+ const createStarted=switched.page.waitForRequest(request=>new URL(request.url()).pathname==='/api/places'&&request.method()==='POST');
+ await switched.page.getByRole('button',{name:'Add place',exact:true}).click();await createStarted;
+ switched.session.signedIn=false;
+ await switched.page.evaluate(()=>window.dispatchEvent(new Event('online')));
+ await expect(switched.page.getByRole('heading',{name:'Welcome back.'})).toBeVisible();
+ await login(switched.page,'manager');
+ await expect(switched.page.getByRole('heading',{name:'Places & clients',exact:true})).toBeVisible();
+ const lateResponse=switched.page.waitForResponse(response=>new URL(response.url()).pathname==='/api/places'&&response.status()===201);
+ releaseCreate();await lateResponse;
+ await expect(switched.page.getByText('Owner-only late place',{exact:true})).toHaveCount(0);
+ await expect(switched.page.locator('.sidebar-account')).toContainText('Manager');
+ console.log('PASS a late owner save response cannot insert private records into a newly signed-in manager workspace');
+ await switched.page.close();
  assert.deepEqual(errors,[]);
  console.log('PASS no browser runtime errors during sign-in, expiry or recovery');
 } finally {

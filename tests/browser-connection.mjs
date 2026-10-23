@@ -67,12 +67,12 @@ try {
     return route.continue();
   });
   await page.goto(origin);
-  const home=page.getByRole('heading',{name:/^Hello[,.]/});
+  const home=page.getByRole('heading',{name:'Your business at a glance',exact:true});
   await expect(home).toBeVisible({timeout:25000});
   assert.ok(stateRequests>=3,'The initial failed state request must be retried automatically.');
   assert.ok(stateRequests<10,'Initial recovery must not loop indefinitely.');
   await expect(page.locator('.error-panel')).toHaveCount(0);
-  await expect(page.getByText(state.places[0].name,{exact:true}).first()).toBeVisible();
+  await expect(page.getByText(state.jobs.find(job=>job.type==='Project'&&job.status!=='Completed').title,{exact:true}).first()).toBeVisible();
   console.log('PASS two initial API failures recover automatically without leaving a stuck error screen');
 
   mode='offline';
@@ -80,7 +80,7 @@ try {
   const connectionNotice=page.locator('.connection-banner,[data-testid="connection-status"]');
   await expect(connectionNotice).toBeVisible({timeout:25000});
   await expect(home).toBeVisible();
-  await expect(page.getByText(state.places[0].name,{exact:true}).first()).toBeVisible();
+  await expect(page.getByText(state.jobs.find(job=>job.type==='Project'&&job.status!=='Completed').title,{exact:true}).first()).toBeVisible();
   await page.screenshot({path:join(artifacts,'connection-interrupted.png'),fullPage:true});
   console.log('PASS later API interruption keeps the last loaded workspace visible with a connection notice');
 
@@ -105,7 +105,7 @@ try {
   const malformedError=malformed.locator('.error-panel');
   await expect(malformedError).toBeVisible({timeout:25000});
   await expect(malformedError).toContainText(/server|response|JSON|connect|workspace/i);
-  await expect(malformed.getByRole('heading',{name:/^Hello[,.]/})).toHaveCount(0);
+  await expect(malformed.getByRole('heading',{name:'Your business at a glance',exact:true})).toHaveCount(0);
   await malformed.screenshot({path:join(artifacts,'invalid-api-response.png'),fullPage:true});
   console.log('PASS an HTML response with status200 is rejected instead of silently showing an empty workspace');
   await malformed.close();

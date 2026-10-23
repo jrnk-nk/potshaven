@@ -8,6 +8,7 @@ import { createStore, collections, AppError } from './store.js';
 import {decodeDesignReference, referenceUploads, instructionHistory, conversationPrompt} from './design-conversation.js';
 import {databaseFailure} from './database-diagnostics.js';
 import {installAssistant} from './assistant.js';
+import {workspaceForRole, recordForRole, collectionForRole, canReadCollection, authorizeMutation, referencedMedia, assertMediaReferences, preserveOperationalMetadata} from './access.js';
 
 const safeEqual = (left, right) => {
   const a = Buffer.from(String(left || '')), b = Buffer.from(String(right || ''));
@@ -109,7 +110,7 @@ export function createApp({
       // real read on every request; never return company data from this route.
       if (typeof store.health === 'function') await store.health();
       else await store.settings();
-      res.json({ ok: true, database: 'connected', demoMode, authenticated: Boolean(req.role), role: req.role, imageGenerationConfigured: Boolean(imageKey), assistantConfigured: Boolean(imageKey), imageModel, imageQuality, imageSize });
+      res.json({ ok: true, database: 'connected', demoMode, authenticated: Boolean(req.role), role: req.role, imageGenerationConfigured: req.role !== 'manager' && Boolean(imageKey), assistantConfigured: Boolean(imageKey), ...(req.role !== 'manager' ? {imageModel, imageQuality, imageSize} : {}) });
     } catch (error) {
       res.status(503).json(databaseFailure(error));
     }
@@ -138,17 +139,34 @@ export function createApp({
   app.use('/api', (req, res, next) => req.role ? next() : next(new AppError('Please sign in to continue.', 401)));
   installAssistant(app, {store, key: imageKey, model: assistantModel, fetchAssistant});
   app.get('/api/state', async (req, res, next) => {
-    try { res.json(await pictures({ ...await store.state(), role: req.role, demoMode, imageGenerationConfigured: Boolean(imageKey), assistantConfigured: Boolean(imageKey), imageModel, imageQuality, imageSize })); }
+    try { res.json(await pictures({ ...workspaceForRole(await store.state(), req.role), role: req.role, demoMode, imageGenerationConfigured: req.role === 'owner' && Boolean(imageKey), assistantConfigured: Boolean(imageKey), ...(req.role === 'owner' ? {imageModel, imageQuality, imageSize} : {}) })); }
     catch (error) { next(error); }
   });
+  async function managerMedia() {return referencedMedia(await pictures(workspaceForRole(await store.state(), 'manager')));}
+  async function checkedPayload(req, collection, operation, existing) {
+    const payload = authorizeMutation(req.role, collection, operation, req.body, existing);
+    if (req.role === 'manager') {
+      if (referencedMedia(payload).size) assertMediaReferences(payload, await managerMedia());
+      if (collection === 'jobs') {
+        if (Array.isArray(payload.crewIds)) for (const id of payload.crewIds) if (!id || !await store.get('workers', id)) throw new AppError('Choose people already approved in the team list.', 409);
+        if (payload.vehicleId && !await store.get('vehicles', payload.vehicleId)) throw new AppError('Choose a vehicle already approved in the fleet.', 409);
+        if (payload.placeId && !await store.get('places', payload.placeId)) throw new AppError('Choose an existing place.', 409);
+      }
+      return preserveOperationalMetadata(payload, existing);
+    }
+    return payload;
+  }
   app.patch('/api/settings', async (req, res, next) => {
     try { if (req.role !== 'owner') throw new AppError('Only the owner can update company settings.', 403); res.json(await pictures(await store.updateSettings(await pictures(req.body)))); } catch (error) { next(error); }
   });
   app.post('/api/inventory/:id/:operation', async (req, res, next) => {
     if (!['use', 'restock'].includes(req.params.operation)) return next();
     try {
+      if (req.role !== 'owner' && req.params.operation !== 'use') throw new AppError('Only the owner can receive or adjust stock.', 403);
       const { quantity, jobId, note } = req.body;
-      res.json(await pictures(await store.stock(req.params.id, quantity, { type: req.params.operation, jobId, note, actor: req.role === 'owner' ? 'Owner' : 'Manager' })));
+      if (req.role === 'manager' && (typeof jobId !== 'string' || !jobId.trim())) throw new AppError('Choose the job this stock was used on.');
+      const result = await store.stock(req.params.id, quantity, { type: req.params.operation, jobId, note, actor: req.role === 'owner' ? 'Owner' : 'Manager' });
+      res.json(await pictures(req.role === 'owner' ? result : {item: recordForRole('inventory', result.item, req.role), movement: recordForRole('stockMovements', result.movement, req.role)}));
     } catch (error) { next(error); }
   });
   async function savedDesignImage(url) {
@@ -173,6 +191,7 @@ export function createApp({
   }
   app.post('/api/designs/generate', async (req, res, next) => {
     try {
+      if (req.role !== 'owner') throw new AppError('The design studio is available to the business owner only.', 403);
       if (!imageKey) throw new AppError('Image generation is not connected yet. Add POTSHAVEN_OPENAI_KEY (or OPENAI_API_KEY) to the server environment to enable the design studio.', 503);
       const body = req.body || {};
       if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > 6000) throw new AppError('Describe your design or edit in 1–6,000 characters.');
@@ -241,14 +260,25 @@ export function createApp({
       else next(new AppError('Image service could not be reached. Check the server network configuration.', 502));
     }
   });
-  const requireMediaAccess = (req, res, next) => req.role ? next() : next(new AppError('Please sign in to continue.', 401));
+  const requireMediaAccess = async (req, res, next) => {
+    try {
+      if (!req.role) throw new AppError('Please sign in to continue.', 401);
+      if (req.role === 'manager' && !(await managerMedia()).has(req.workspaceMediaPath)) throw new AppError('This image is available to the business owner only.', 403);
+      res.set('Cache-Control', 'private, no-store').vary('Cookie');
+      next();
+    } catch (error) {next(error);}
+  };
+  app.use('/media', (req, res, next) => {
+    // Keep the original complete path while Express mounts individual media handlers.
+    req.workspaceMediaPath = '/media' + req.path; res.set('Cache-Control', 'private, no-store').vary('Cookie'); next();
+  });
   if (mediaStorage) app.use('/media', requireMediaAccess, mediaStorage.serve);
   else {
     app.use('/media/uploads', requireMediaAccess, express.static(uploadsDir, {
       dotfiles: 'deny', index: false,
-      setHeaders: res => res.setHeader('Cache-Control', 'private, max-age=31536000, immutable'),
+      setHeaders: res => {res.setHeader('Cache-Control', 'private, no-store'); res.vary('Cookie');},
     }));
-    app.use('/media', requireMediaAccess, express.static(join(dataDir, 'designs'), { dotfiles: 'deny', index: false }));
+    app.use('/media', requireMediaAccess, express.static(join(dataDir, 'designs'), { dotfiles: 'deny', index: false, setHeaders: res => {res.setHeader('Cache-Control', 'private, no-store'); res.vary('Cookie');} }));
   }
   app.use('/media', (req, res, next) => next(new AppError('Image not found.', 404)));
   app.use('/api/:collection', (req, res, next) => {
@@ -257,7 +287,10 @@ export function createApp({
     next();
   });
   app.get('/api/:collection', async (req, res, next) => {
-    try { res.json(await pictures(await store.list(req.params.collection))); } catch (error) { next(error); }
+    try {
+      if (!canReadCollection(req.role, req.params.collection)) throw new AppError('This information is available to the business owner only.', 403);
+      res.json(await pictures(collectionForRole(req.params.collection, await store.list(req.params.collection), req.role)));
+    } catch (error) { next(error); }
   });
   function authorizePurchase(req, existing) {
     if (req.params.collection === 'purchaseRequests' && req.role !== 'owner') {
@@ -267,20 +300,26 @@ export function createApp({
   }
   app.post('/api/:collection', async (req, res, next) => {
     try {
+      const payload = await checkedPayload(req, req.params.collection, 'create');
       authorizePurchase(req);
       const id = randomUUID();
       const defaults = req.params.collection === 'jobs' ? { status: 'Scheduled', type: 'Maintenance', crewIds: [], tasks: [] } : req.params.collection === 'inventory' ? { quantity: 0, minStock: 0, cost: 0, category: 'Plants', unit: 'plants' } : req.params.collection === 'purchaseRequests' ? { status: 'Pending', requestedBy: req.role } : {};
-      res.status(201).json(await pictures(await store.put(req.params.collection, await pictures({ ...defaults, ...req.body, id }))));
+      const record = await store.put(req.params.collection, await pictures({ ...defaults, ...payload, id }));
+      res.status(201).json(await pictures(recordForRole(req.params.collection, record, req.role)));
     } catch (error) { next(error); }
   });
   app.patch('/api/:collection/:id', async (req, res, next) => {
     try {
-      authorizePurchase(req, await store.get(req.params.collection, req.params.id));
-      res.json(await pictures(await store.update(req.params.collection, req.params.id, await pictures(req.body), req.role === 'owner' ? 'Owner' : 'Manager')));
+      if (!canReadCollection(req.role, req.params.collection)) throw new AppError('This information is available to the business owner only.', 403);
+      const existing = await store.get(req.params.collection, req.params.id);
+      const payload = await checkedPayload(req, req.params.collection, 'update', existing);
+      authorizePurchase(req, existing);
+      const record = await store.update(req.params.collection, req.params.id, await pictures(payload), req.role === 'owner' ? 'Owner' : 'Manager');
+      res.json(await pictures(recordForRole(req.params.collection, record, req.role)));
     } catch (error) { next(error); }
   });
   app.delete('/api/:collection/:id', async (req, res, next) => {
-    try { authorizePurchase(req, await store.get(req.params.collection, req.params.id)); await store.remove(req.params.collection, req.params.id); res.status(204).end(); } catch (error) { next(error); }
+    try { authorizeMutation(req.role, req.params.collection, 'delete'); authorizePurchase(req, await store.get(req.params.collection, req.params.id)); await store.remove(req.params.collection, req.params.id); res.status(204).end(); } catch (error) { next(error); }
   });
   app.use('/api', (req, res, next) => next(new AppError('API endpoint not found.', 404)));
   const dist = join(projectRoot, 'dist');

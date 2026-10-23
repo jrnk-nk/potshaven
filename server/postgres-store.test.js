@@ -217,7 +217,7 @@ test('PostgreSQL upgrades deployed schema version one without losing data, sessi
   const upgraded=await createPostgresStore('',{query});
   assert.equal((await upgraded.get('places','existing')).name,'Existing customer');
   assert.equal(await upgraded.getSessionSecret(),secret);
-  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value,'3');
+  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value,'4');
   const signatures=(await query("SELECT to_regprocedure('potshaven_private.update_record(text,text,jsonb,text,text,text,text)') AS old, to_regprocedure('potshaven_private.update_record(text,text,jsonb,text,text,text,text,jsonb)') AS guarded")).rows[0];
   assert.ok(signatures.old);
   assert.ok(signatures.guarded);
@@ -227,11 +227,11 @@ test('PostgreSQL upgrades deployed schema version one without losing data, sessi
   assert.equal((await upgraded.update('places','existing',{name:'Updated customer'},'Manager',{expected})).name,'Updated customer');
   await createPostgresStore('',{query});
   assert.equal((await upgraded.get('places','existing')).name,'Updated customer');
-  await query("UPDATE potshaven_private.metadata SET value='\"4\"'::jsonb WHERE key='schemaVersion'");
+  await query("UPDATE potshaven_private.metadata SET value='\"5\"'::jsonb WHERE key='schemaVersion'");
   await createPostgresStore('',{query});
-  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value,'4','Older application instances must not downgrade a future migration marker.');
+  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value,'5','Older application instances must not downgrade a future migration marker.');
   // Restore the fixture marker so subsequent independent tests use this schema.
-  await query("UPDATE potshaven_private.metadata SET value='\"3\"'::jsonb WHERE key='schemaVersion'");
+  await query("UPDATE potshaven_private.metadata SET value='\"4\"'::jsonb WHERE key='schemaVersion'");
 });
 
 test('PostgreSQL sign-in limits are atomic across independent cloud instances and expire after fifteen minutes',async()=>{

@@ -197,7 +197,7 @@ test('PostgreSQL upgrades version two in place while keeping old mutation signat
   const upgraded = await reopen();
   assert.deepEqual(await upgraded.state(), records);
   assert.equal(await upgraded.getSessionSecret(), secret);
-  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value, '3');
+  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value, '4');
   assert.deepEqual(await upgraded.activityFeed(), {items: [], unreadCount: 0});
   const event = await managerActivity(upgraded, {role: 'manager', collection: 'inventory', operation: 'use', record: await upgraded.get('inventory', 'plants'), quantity: 1, jobId: 'visit'});
   await upgraded.stock('plants', 1, {jobId: 'visit', activity: event});

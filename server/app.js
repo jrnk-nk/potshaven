@@ -12,6 +12,8 @@ import {installAssistant} from './assistant.js';
 import {workspaceForRole, recordForRole, collectionForRole, canReadCollection, authorizeMutation, referencedMedia, assertMediaReferences, preserveOperationalMetadata} from './access.js';
 import {assertNoFinancialFields, withoutFinancialFields, preserveFinancialMetadata} from './financial-access.js';
 import {installActivity, managerActivity} from './activity.js';
+import {applySecurityHeaders} from './security-headers.js';
+import {installDataProtection} from './data-protection.js';
 
 const safeEqual = (left, right) => {
   const a = Buffer.from(String(left || '')), b = Buffer.from(String(right || ''));
@@ -82,28 +84,45 @@ export function createApp({
   function session(req) {
     const cookie = (req.headers.cookie || '').split(';').map(value => value.trim()).find(value => value.startsWith('potshaven_session='))?.split('=')[1];
     if (cookie) {
-      const [payload, signature] = cookie.split('.');
-      if (payload && safeEqual(sign(payload), signature)) {
+      const parts = cookie.split('.');
+      const [payload, signature] = parts;
+      if (parts.length === 2 && payload && safeEqual(sign(payload), signature)) {
         try {
           const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString());
-          if (['owner', 'manager'].includes(parsed.role) && parsed.expires > Date.now()) return parsed.role;
+          if (['owner', 'manager'].includes(parsed.role) && Number.isSafeInteger(parsed.expires) && parsed.expires > Date.now()) {
+            // The digest supports revoking cookies issued before nonce fields
+            // were added. No raw token is written to the database.
+            return {role: parsed.role, expiresAt: parsed.expires, key: createHmac('sha256', sessionSigningKey).update(`session-revocation:${cookie}`).digest('hex')};
+          }
         } catch { /* malformed session is unauthenticated */ }
       }
     }
-    return demoMode ? 'owner' : null;
+    return null;
   }
-  app.use(express.json({ limit: '12mb' }));
   app.use((req, res, next) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Referrer-Policy', 'same-origin');
+    applySecurityHeaders(req, res);
     if (req.path.startsWith('/api')) res.setHeader('Cache-Control', 'no-store');
-    req.role = session(req);
     // Cookies are SameSite=Strict. Also reject cross-site writes from browsers.
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin) {
       let origin;
       try { origin = new URL(req.headers.origin); } catch { return next(new AppError('Invalid request origin.', 403)); }
       const allowedHosts = [req.headers.host, req.headers['x-forwarded-host']].filter(Boolean);
       if (!allowedHosts.includes(origin.host)) return next(new AppError('Cross-site writes are not allowed.', 403));
+    }
+    next();
+  });
+  app.use(express.json({ limit: '12mb' }));
+  app.use(async (req, res, next) => {
+    req.authSession = session(req);
+    req.role = demoMode ? 'owner' : null;
+    if (req.authSession) {
+      try {
+        if (typeof store.isSessionRevoked !== 'function') throw new Error('Session verification unavailable.');
+        if (!await store.isSessionRevoked(req.authSession.key)) req.role = req.authSession.role;
+      } catch (error) {
+        // A revoked session must not become usable during a database outage.
+        return res.status(503).json(databaseFailure(error));
+      }
     }
     next();
   });
@@ -143,13 +162,25 @@ export function createApp({
       }
       if (!allowed) throw new AppError('Too many sign-in attempts. Please try again in 15 minutes.', 429);
       if (!accepted) throw new AppError('Incorrect password or role is not configured.', 401);
-      const payload = Buffer.from(JSON.stringify({ role, expires: Date.now() + 12 * 60 * 60 * 1000 })).toString('base64url');
+      const payload = Buffer.from(JSON.stringify({ role, expires: Date.now() + 12 * 60 * 60 * 1000, nonce: randomUUID() })).toString('base64url');
       res.cookie('potshaven_session', `${payload}.${sign(payload)}`, { httpOnly: true, sameSite: 'strict', secure: req.secure || req.headers['x-forwarded-proto'] === 'https', maxAge: 12 * 60 * 60 * 1000 });
       res.json({ role, demoMode });
     } catch (error) { next(error); }
   });
-  app.post('/api/auth/logout', (req, res) => { res.clearCookie('potshaven_session'); res.json({ ok: true }); });
+  app.post('/api/auth/logout', async (req, res) => {
+    if (req.authSession) {
+      try {
+        if (typeof store.revokeSession !== 'function') throw new Error('Session verification unavailable.');
+        await store.revokeSession(req.authSession.key, req.authSession.expiresAt);
+      } catch (error) {
+        // Do not confirm or clear the cookie before durable revocation succeeds.
+        return res.status(503).json(databaseFailure(error));
+      }
+    }
+    res.clearCookie('potshaven_session'); res.json({ ok: true });
+  });
   app.use('/api', (req, res, next) => req.role ? next() : next(new AppError('Please sign in to continue.', 401)));
+  installDataProtection(app, {store, mediaStorage});
   installActivity(app, {store});
   installAssistant(app, {store, key: imageKey, model: assistantModel, fetchAssistant});
   app.get('/api/state', async (req, res, next) => {

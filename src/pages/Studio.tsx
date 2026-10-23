@@ -5,6 +5,7 @@ import { prepareImage } from '../images';
 import { FINANCIAL_FEATURES_ENABLED } from '../features';
 import DesignChat from './DesignChat';
 import BrandSignature from '../BrandSignature';
+import DataProtection from './DataProtection';
 
 type Row = Record<string, any>;
 
@@ -144,5 +145,6 @@ function CompanySettingsPage() {
       <div className="studio-card studio-card-pad" style={{ marginTop: 23 }}><h2 className="studio-settings-title">Your workspace access</h2><p className="studio-settings-sub">{data.demoMode ? 'Explore how the workspace works for the owner and manager. These switches are available in the demo only.' : `You are signed in as the ${isOwner ? 'owner' : 'manager'}.`}</p>{data.demoMode ? <div className="studio-mini-actions"><button type="button" className={`btn ${isOwner ? 'btn-primary' : 'btn-secondary'}`} disabled={switching || isOwner} onClick={() => void sessionAction('owner')}>{isOwner && <Check size={13} />} Owner view</button><button type="button" className={`btn ${!isOwner ? 'btn-primary' : 'btn-secondary'}`} disabled={switching || !isOwner} onClick={() => void sessionAction('manager')}>{!isOwner && <Check size={13} />} Manager view</button></div> : <button type="button" className="btn btn-secondary" disabled={switching} onClick={() => void sessionAction()}>{switching ? 'Signing out…' : 'Sign out'}</button>}</div>
       <div className="studio-card studio-card-pad" style={{ marginTop: 23, background: '#f4f6ed' }}><div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}><Leaf size={20} color="#789366" /><div><h4 style={{ fontSize: 12, margin: '0 0 6px' }}>Built around your people.</h4><p className="studio-hint" style={{ margin: 0 }}>The owner and manager run this workspace. Workers receive their daily instructions through WhatsApp, so they do not need an account.</p></div></div></div></div>
     </div></form>
+    <DataProtection/>
   </>;
 }

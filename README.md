@@ -67,6 +67,12 @@ Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwr
 
 AI replies and concepts need the configured provider key, model access, and billing. Automated tests mock provider requests and do not verify a paid generation against the live account. Reminders and manager activity are in-app. Email, automatic WhatsApp sending and route optimisation are not configured. Activity records start with new manager changes after this feature is installed; existing work is not presented as historical notifications.
 
+## Data protection
+
+Supabase uses a private schema with RLS enabled on every app table and browser-role access revoked. The backend still enforces owner/manager permissions. Sign-out revokes its session in the database so a copied cookie cannot reopen the workspace. Owners can check actual storage and access protection in **Settings → Your saved workspace**.
+
+Saved records and uploaded/generated images persist in the hosted database. Automatic backups and point-in-time recovery are separate Supabase account settings; this app cannot verify or enable them with its database health check. See [data protection and recovery](docs/DATA_PROTECTION.md) for the storage scope and a restore verification checklist.
+
 ## Loading and recovery
 
 Pages load on demand. Ordinary changes update the affected record without fetching the entire company again. Uploaded photos are resized before sending, stored separately, and served with role checks. Temporary read failures retry automatically; a later interruption keeps already loaded records visible and prevents saves until reconnected. Writes are never automatically retried, avoiding duplicate stock deductions.

@@ -23,8 +23,8 @@ Image generation is optional. Add `POTSHAVEN_OPENAI_KEY` privately in Vercel and
 ## What the integration stores
 
 - Company records, stock history, uploaded photos, generated designs, and the session signing secret persist in Supabase PostgreSQL.
-- The tables and functions live in `potshaven_private`, with public schema/function privileges revoked. No Supabase public/anon key or service-role key is sent to the browser.
-- Stock deductions and recurring follow-ups run atomically in the database. Session cookies remain valid across function cold starts and expire when passwords change.
+- The tables and functions live in `potshaven_private`, with RLS enabled on all four private tables and schema/table/column/sequence/function privileges revoked from public browser roles. The backend remains responsible for owner/manager authorization. No Supabase public/anon key or service-role key is sent to the browser.
+- Stock deductions and recurring follow-ups run atomically in the database. Session cookies remain valid across function cold starts and expire when passwords change. Successful sign-out also revokes that specific session in the database.
 - Photos load from authenticated media routes with private caching; they are not embedded in every workspace response.
 - TLS certificate and hostname verification remain enabled. The backend includes Supabase's official production database CA certificates, so Vercel can verify the database connection without another environment variable. Supabase’s Transaction Pooler is used with prepared statements disabled and a small connection pool for serverless execution.
 
@@ -35,3 +35,9 @@ Check that the Supabase project is active, the connection string uses the Transa
 The backend also repairs company settings saved in the legacy double-encoded format. This happens automatically after deployment, preserves a private backup, and does not clear company records or reset passwords. `/api/health` verifies real database reads instead of reporting only that the server started. Temporary connection failures retry a read once, and unsuccessful cloud startup releases its pool before reconnecting. Saves and stock deductions are never automatically repeated.
 
 This repository includes tests against an embedded PostgreSQL engine and the Vercel handler. The deployed site's public health endpoint can verify a current database read, but it does not establish that authenticated workflows, provider account settings, backups, or paid image generation have been checked. Reviewing Supabase/Vercel account configuration requires authorized access to those accounts.
+
+## Verify access and recovery
+
+After deployment, the owner can open **Settings → Your saved workspace → Check saved workspace** to inspect actual RLS and access permissions. The migration applies automatically; do not add permissive browser policies to the private tables.
+
+Confirm automatic backup retention and any point-in-time recovery setting in the Supabase dashboard. These account settings cannot be inferred from a healthy database connection. Follow the [data protection and recovery guide](docs/DATA_PROTECTION.md) to test restoration safely into a separate project.

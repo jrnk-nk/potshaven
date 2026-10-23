@@ -155,6 +155,25 @@ export function createStore(filename = '.data/potshaven.db', { seed = true, now 
       db.prepare('DELETE FROM records WHERE collection = ? AND id = ?').run(collection, id);
     },
     settings() { const row = getMeta.get('settings'); return row ? JSON.parse(row.value) : {}; },
+    isSessionRevoked(key, now = Date.now()) {
+      if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key) || !Number.isSafeInteger(now) || now < 0) throw new AppError('Invalid session reference.');
+      const row = getMeta.get(`session-revoked:${key}`);
+      if (!row) return false;
+      const value = JSON.parse(row.value);
+      if (!Number.isSafeInteger(value?.expiresAt) || value.expiresAt < 0) throw new AppError('Session verification is temporarily unavailable.', 503);
+      return value.expiresAt > now;
+    },
+    revokeSession(key, expiresAt, now = Date.now()) {
+      if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key) || !Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(expiresAt) || expiresAt <= now) throw new AppError('Invalid session reference.');
+      return transaction(() => {
+        db.prepare("DELETE FROM metadata WHERE key LIKE 'session-revoked:%' AND json_extract(value, '$.expiresAt') <= ?").run(now);
+        const reference = `session-revoked:${key}`;
+        const previous = getMeta.get(reference);
+        const previousExpiry = previous ? JSON.parse(previous.value)?.expiresAt : 0;
+        if (!Number.isSafeInteger(previousExpiry) || previousExpiry < 0) throw new AppError('Session verification is temporarily unavailable.', 503);
+        setMeta.run(reference, JSON.stringify({expiresAt: Math.max(expiresAt, previousExpiry)}));
+      });
+    },
     recordLoginAttempt(key, accepted, now = Date.now()) {
       if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key) || typeof accepted !== 'boolean' || !Number.isSafeInteger(now) || now < 0) throw new AppError('Invalid sign-in attempt.');
       return transaction(() => {

@@ -1,4 +1,5 @@
 import {AppError, collections} from './store.js';
+import {financialCollectionAllowed, financialRecordAllowed, withoutFinancialFields, assertFinancialMutation} from './financial-access.js';
 
 const own = (value, key) => Object.hasOwn(value, key);
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -38,7 +39,7 @@ const dateFields = new Set(['date', 'deadline', 'followUpDate']);
 const validDate = value => value === '' || typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 const readonlyEcho = ['id', 'createdAt', 'updatedAt', 'previousJobId', 'nextJobId'];
 export const isManagerRequest = record => typeof record?.requestedBy === 'string' && record.requestedBy.toLowerCase() === 'manager';
-export const canReadCollection = (role, collection) => role === 'owner' || role === 'manager' && managerCollections.has(collection);
+export const canReadCollection = (role, collection) => financialCollectionAllowed(collection) && (role === 'owner' || role === 'manager' && managerCollections.has(collection));
 
 function safeLeaf(value) {return value === null || ['string', 'boolean'].includes(typeof value) || typeof value === 'number' && Number.isFinite(value);}
 function nestedRecord(value, key) {
@@ -49,21 +50,20 @@ function nestedRecord(value, key) {
 }
 
 export function recordForRole(collection, record, role) {
-  if (!record || role === 'owner') return record;
+  if (!record || !financialRecordAllowed(collection, record)) return undefined;
+  if (role === 'owner') return withoutFinancialFields(record);
   if (!canReadCollection(role, collection) || collection === 'purchaseRequests' && !isManagerRequest(record)) return undefined;
-  return Object.fromEntries(Object.entries(pick(record, fields[collection])).filter(([key, value]) => nested[key] && Array.isArray(value) || stringArrays.has(key) && Array.isArray(value) || safeLeaf(value)).map(([key, value]) => [key, nested[key] ? nestedRecord(value, key) : stringArrays.has(key) ? value.filter(item => typeof item === 'string') : value]));
+  return withoutFinancialFields(Object.fromEntries(Object.entries(pick(record, fields[collection])).filter(([key, value]) => nested[key] && Array.isArray(value) || stringArrays.has(key) && Array.isArray(value) || safeLeaf(value)).map(([key, value]) => [key, nested[key] ? nestedRecord(value, key) : stringArrays.has(key) ? value.filter(item => typeof item === 'string') : value])));
 }
 
 export function collectionForRole(collection, records, role) {
-  if (role === 'owner') return records;
   if (!canReadCollection(role, collection)) return [];
   return records.map(record => recordForRole(collection, record, role)).filter(Boolean);
 }
 
 export function workspaceForRole(state, role) {
-  if (role === 'owner') return state;
   const result = Object.fromEntries(collections.map(collection => [collection, collectionForRole(collection, Array.isArray(state[collection]) ? state[collection] : [], role)]));
-  result.settings = Object.fromEntries(Object.entries(pick(object(state.settings) ? state.settings : {}, managerSettings)).filter(([, value]) => safeLeaf(value)));
+  result.settings = withoutFinancialFields(role === 'owner' ? state.settings : Object.fromEntries(Object.entries(pick(object(state.settings) ? state.settings : {}, managerSettings)).filter(([, value]) => safeLeaf(value))));
   return result;
 }
 
@@ -79,8 +79,23 @@ function assertNested(value, key) {
   }
 }
 
+/** A stale site form must never replace visits recorded by another session. */
+export function assertVisitHistory(payload, previous, role) {
+  if (!own(payload, 'inspections') || !Array.isArray(previous?.inspections)) return;
+  if (!Array.isArray(payload.inspections)) throw new AppError('Site visits must be a list.');
+  const visible = recordForRole('places', previous, role)?.inspections || [];
+  const remaining = [...payload.inspections];
+  for (const visit of visible) {
+    const index = remaining.findIndex(item => visit?.id ? item?.id === visit.id : JSON.stringify(item) === JSON.stringify(visit));
+    if (index < 0) throw new AppError('Another visit is already saved for this site. Refresh to see the full visit history, then try again.', 409);
+    remaining.splice(index, 1);
+  }
+}
+
 /** Both ordinary CRUD and assistant proposals share the same write boundary. */
 export function authorizeMutation(role, collection, operation, payload = {}, existing) {
+  assertFinancialMutation(collection, payload, existing);
+  if (collection === 'places' && operation === 'update' && object(payload)) assertVisitHistory(payload, existing, role);
   if (role === 'owner') return payload;
   if (role !== 'manager' || operation === 'delete' || !writable[collection] || !['create', 'update'].includes(operation)) throw forbidden();
   if (operation === 'create' && ['workers', 'vehicles'].includes(collection)) throw forbidden();

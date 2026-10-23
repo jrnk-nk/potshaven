@@ -38,7 +38,7 @@ async function setup(t) {
   return {base,store,request,generations:()=>generations};
 }
 
-test('manager state and collection responses exclude finance, studio, pay and private fields; owner retains them', async t=>{
+test('both roles hide money; manager also excludes studio and owner-private fields', async t=>{
   const {request} = await setup(t);
   const state = await (await request('/api/state')).json();
   assert.equal(state.role,'manager');
@@ -58,9 +58,9 @@ test('manager state and collection responses exclude finance, studio, pay and pr
   const workers = await (await request('/api/workers')).json();
   assert.equal(workers[0].agreedRate,undefined);
   const ownerState = await (await request('/api/state','owner')).json();
-  assert.equal(ownerState.workers[0].agreedRate,9876);
-  assert.equal(ownerState.inventory[0].cost,543);
-  assert.equal(ownerState.jobs[0].budget,3444);
+  assert.equal(ownerState.workers[0].agreedRate,undefined);
+  assert.equal(ownerState.inventory[0].cost,undefined);
+  assert.equal(ownerState.jobs[0].budget,undefined);
   assert.equal(ownerState.settings.ownerName,'PRIVATE_OWNER');
 });
 
@@ -91,7 +91,7 @@ test('manager cannot bypass owner-only changes through CRUD, image generation, o
   for(const [path,method,body]of forbidden) assert.equal((await request(path,'manager',method,body)).status,403,path);
   assert.equal(generations(),0,'Owner-only guard must run before a paid call.');
   assert.deepEqual(store.state(),before);
-  for(const changes of [{notes:{amount:500}}, {tasks:[{text:{amount:1},done:false}]}, {crewIds:[{}]}, {date:'2026-02-30'}]) assert.equal((await request('/api/jobs/job','manager','PATCH',changes)).status,400);
+  for(const changes of [{notes:{}}, {tasks:[{text:{},done:false}]}, {crewIds:[{}]}, {date:'2026-02-30'}]) assert.equal((await request('/api/jobs/job','manager','PATCH',changes)).status,400);
   assert.deepEqual(store.state(),before);
 });
 
@@ -111,7 +111,7 @@ test('manager saves operational progress and availability without changing priva
   assert.equal((await request('/api/workers/worker','manager','PATCH',{available:false})).status,200);
   assert.equal(store.get('workers','worker').agreedRate,9876);
   assert.equal((await request('/api/vehicles/van','manager','PATCH',{status:'Servicing',notes:'Pressure check needed'})).status,200);
-  const requestResponse = await request('/api/purchaseRequests','manager','POST',{title:'Replacement pots',requestType:'Restock',quantity:2,estimatedCost:100,status:'Pending'});
+  const requestResponse = await request('/api/purchaseRequests','manager','POST',{title:'Replacement pots',requestType:'Restock',quantity:2,status:'Pending'});
   assert.equal(requestResponse.status,201);
   const created = await requestResponse.json();
   assert.equal(created.requestedBy,'manager');
@@ -166,5 +166,5 @@ test('media access follows visible operational records and prevents attaching ow
 test('manager allowlists omit object-shaped private data in malformed legacy scalar fields',()=>{
   const state=workspaceForRole({settings:{companyName:'PotsHaven',ownerName:'Hidden'},jobs:[{id:'job',title:'Visit',notes:{privateCost:100}}]},'manager');
   assert.equal(state.jobs[0].notes,undefined);
-  assert.throws(()=>authorizeMutation('manager','jobs','update',{notes:{privateCost:100}},{id:'job',type:'Maintenance'}),/text/);
+  assert.throws(()=>authorizeMutation('manager','jobs','update',{notes:{privateCost:100}},{id:'job',type:'Maintenance'}),/temporarily unavailable/);
 });

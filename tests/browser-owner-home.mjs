@@ -38,12 +38,12 @@ Object.assign(state, {
   payments: [{id: 'received', description: 'Private paid invoice', status: 'Paid', amount: 1200, dueDate: date}, {id: 'unpaid', description: 'Private unpaid invoice', status: 'Unpaid', amount: 600, dueDate: date}],
   expenses: [{id: 'cost', description: 'Private operating cost', amount: 200, date}],
   stockMovements: [{id: 'used', inventoryId: 'plant', type: 'use', quantity: 2, totalCost: 100, date}],
-  purchaseRequests: [{id: 'pending', title: 'Pots for the entrance', status: 'Pending', requestedBy: 'manager', estimatedCost: 150, quantity: 4, date}, {id: 'receipt', title: 'Travel receipt', status: 'Pending', requestedBy: 'manager', estimatedCost: 80, quantity: 1, date}],
+  purchaseRequests: [{id: 'pending', title: 'Pots for the entrance', status: 'Pending', requestedBy: 'manager', estimatedCost: 150, quantity: 4, date}, {id: 'soil', title: 'Soil for planting', status: 'Pending', requestedBy: 'manager', estimatedCost: 80, quantity: 1, date}],
   designs: [{id: 'private-design', title: 'Private studio instruction', prompt: 'Private studio instruction', source: 'Design studio', image: '/media/private-design.jpg', createdAt: date}],
 });
 
 const privateMediaRequests = [];
-const currency = amount => new Intl.NumberFormat('en-GH', {style: 'currency', currency: 'GHS', maximumFractionDigits: 0}).format(amount);
+const activityRoles = [];
 async function home() {
   await page.goto(`${origin}/#overview`);
   await expect(page.locator('.owner-home, .simple-home')).toBeVisible();
@@ -55,36 +55,51 @@ try {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path === '/api/state' && request.method() === 'GET') return route.fulfill({json: state});
+    if (path === '/api/activity' && request.method() === 'GET') {
+      activityRoles.push(state.role);
+      return route.fulfill({json: {items: [], unreadCount: 0}});
+    }
     throw new Error(`Unexpected role-home API request: ${request.method()} ${path}`);
   });
   await page.route('**/media/private-design.jpg', route => {privateMediaRequests.push(route.request().url()); return route.fulfill({status: 403, json: {error: 'Owner access required.'}});});
 
   let dashboard = await home();
   await expect(dashboard.getByRole('heading', {name: 'Your business at a glance', exact: true})).toBeVisible();
-  const received = dashboard.getByRole('button', {name: /Money received/});
-  await expect(received).toContainText(currency(1200));
-  await expect(dashboard.getByRole('button', {name: /Payments outstanding/})).toContainText(currency(600));
-  await expect(dashboard.getByRole('button', {name: /Recorded costs/})).toContainText(currency(300));
+  const metrics = dashboard.locator('.owner-metrics');
+  await expect(metrics.getByRole('button', {name: /Sites/})).toContainText('1');
+  await expect(metrics.getByRole('button', {name: /Visits today/})).toContainText('1');
+  await expect(metrics.getByRole('button', {name: /Work overdue/})).toContainText('0');
   await expect(dashboard.getByRole('button', {name: /Waiting for approval/})).toContainText('2');
   await expect(dashboard.getByRole('button', {name: /Active projects/})).toContainText('1');
-  await expect(dashboard.getByText(/profit/i)).toHaveCount(0);
-  console.log('PASS owner Home shows recorded money, costs, approvals and active projects without inventing profit');
+  await expect(dashboard.getByText(/money received|payments outstanding|recorded costs|estimated cost|profit|GHS|GH₵/i)).toHaveCount(0);
+  await expect(dashboard.getByText(/Private paid invoice|Private unpaid invoice|Private operating cost/)).toHaveCount(0);
+  await expect(page.getByRole('button', {name: 'Business', exact: true})).toHaveCount(0);
+  console.log('PASS owner Home shows sites, visits, overdue work, supply approvals and project progress without financial data');
 
-  await received.click();
-  await expect.poll(() => new URL(page.url()).hash).toBe('#business');
-  dashboard = await home();
   await dashboard.getByRole('button', {name: /Active projects/}).click();
-  await expect.poll(() => new URL(page.url()).hash).toBe('#projects');
+  await expect.poll(() => new URL(page.url()).hash).toBe('#sites');
+  await expect(page.getByRole('heading', {name: 'Sites', exact: true})).toBeVisible();
+  for (const legacy of ['places', 'projects']) {
+    await page.goto(`${origin}/#${legacy}`);
+    await expect.poll(() => new URL(page.url()).hash).toBe('#sites');
+    await expect(page.getByRole('heading', {name: 'Sites', exact: true})).toBeVisible();
+  }
+  await page.goto(`${origin}/#projects?site=hotel`);
+  await expect.poll(() => new URL(page.url()).hash).toBe('#sites?site=hotel');
+  await expect(page.getByRole('heading', {name: 'Palm Court', exact: true})).toBeVisible();
+  await page.goto(`${origin}/#business`);
+  await expect(page.getByRole('heading', {name: 'This page isn’t available right now', exact: true})).toBeVisible();
+  await expect(page.getByText('Private paid invoice', {exact: true})).toHaveCount(0);
   dashboard = await home();
   await dashboard.getByRole('button', {name: /Waiting for approval/}).click();
   await expect.poll(() => new URL(page.url()).hash).toBe('#inventory');
   await expect(page.getByRole('combobox', {name: 'Inventory tools', exact: true})).toHaveValue('Purchase requests');
-  console.log('PASS owner business cards open the real finance, project and purchasing routes');
+  console.log('PASS Sites replaces Places and Projects, preserves site deep links, blocks finance, and opens supply requests');
 
   await page.setViewportSize({width: 390, height: 844});
   dashboard = await home();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Owner Home must fit a phone.');
-  await page.screenshot({path: join(artifacts, 'owner-business-home-mobile.png'), fullPage: true});
+  await page.screenshot({path: join(artifacts, 'owner-operations-home-mobile.png'), fullPage: true});
 
   state.role = 'manager';
   await page.reload();
@@ -129,15 +144,18 @@ try {
   await expect(page.getByText('Studio availability', {exact: true})).toHaveCount(0);
   console.log('PASS manager account has session access without company branding or studio settings');
 
-  for (const path of ['studio', 'portfolio']) {
+  await page.goto(`${origin}/#business`);
+  await expect(page.getByRole('heading', {name: 'This page isn’t available right now', exact: true})).toBeVisible();
+  for (const path of ['studio', 'portfolio', 'activity', 'studio?site=hotel']) {
     await page.goto(`${origin}/#${path}`);
     await expect(page.getByRole('heading', {name: 'This area belongs to the owner', exact: true})).toBeVisible();
     await expect(page.getByRole('region', {name: 'Studio gallery', exact: true})).toHaveCount(0);
     await expect(page.getByText('Private studio instruction', {exact: true})).toHaveCount(0);
   }
   assert.equal(privateMediaRequests.length, 0, 'Forbidden manager routes must not mount private studio images.');
+  assert.ok(activityRoles.length > 0 && activityRoles.every(role => role === 'owner'), 'Only the owner may request the activity inbox.');
   assert.deepEqual(runtimeErrors, [], 'Role-specific homes and account screens must not produce runtime errors.');
-  console.log('PASS manual manager studio and portfolio links never mount private work');
+  console.log('PASS manager direct links cannot open studio, portfolio, activity or financial screens');
 } catch (error) {
   await page.screenshot({path: join(artifacts, 'role-home-failure.png'), fullPage: true}).catch(() => {});
   throw error;

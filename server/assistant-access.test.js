@@ -109,7 +109,7 @@ test('manager assistant prepares existing crew/vehicle assignments and availabil
   }
 });
 
-test('owner assistant retains worker agreements and permitted hiring actions', async t => {
+test('owner assistant keeps operational hiring actions without pay or financial agreements', async t => {
   let snapshot;
   const {post, owner} = await setup(t, async (url, request) => {
     const payload = JSON.parse(request.body);
@@ -119,9 +119,9 @@ test('owner assistant retains worker agreements and permitted hiring actions', a
   const response = await post(owner, {message: 'Prepare a new worker named Kojo, a gardener.'});
   assert.equal(response.status, 200);
   assert.equal((await response.json()).actions[0].collection, 'workers');
-  assert.equal(snapshot.workers[0].agreedRate, 99991);
-  assert.equal(snapshot.workers[0].agreementNotes, 'OWNER_PRIVATE_PAY_TERMS');
-  assert.equal(snapshot.contracts[0].title, 'OWNER_PRIVATE_CONTRACT');
+  assert.equal(snapshot.workers[0].agreedRate, undefined);
+  assert.equal(snapshot.workers[0].agreementNotes, undefined);
+  assert.deepEqual(snapshot.contracts, []);
 });
 
 

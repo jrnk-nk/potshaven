@@ -50,7 +50,7 @@ async function concurrentWorkspace(t, collection, initial) {
 
 test('a manager edit authorized before owner approval cannot revise or reopen the reviewed purchase', async t => {
   const workspace = await concurrentWorkspace(t, 'purchaseRequests', {id: 'request', title: 'Approved planters', status: 'Pending', requestedBy: 'manager', estimatedCost: 100});
-  const managerResponse = workspace.update('manager', {status: 'Pending', estimatedCost: 900});
+  const managerResponse = workspace.update('manager', {status: 'Pending', quantity: 9});
   await workspace.managerChecked;
   const ownerResponse = await workspace.update('owner', {status: 'Approved'});
   assert.equal(ownerResponse.status, 200);
@@ -74,13 +74,14 @@ test('a stale maintenance edit cannot override a deadline after the owner makes 
 });
 
 test('a manager progress edit cannot restore outdated private task metadata over a newer owner edit', async t => {
-  const workspace = await concurrentWorkspace(t, 'jobs', {id: 'job', title: 'Garden care', type: 'Maintenance', status: 'Scheduled', date: '2026-10-23', crewIds: [], tasks: [{id: 'water', text: 'Water plants', done: false, privateCost: 100}]});
+  const workspace = await concurrentWorkspace(t, 'jobs', {id: 'job', title: 'Garden care', type: 'Maintenance', status: 'Scheduled', date: '2026-10-23', crewIds: [], tasks: [{id: 'water', text: 'Water plants', done: false, privateCost: 100, privateProof: 'original'}]});
   const managerResponse = workspace.update('manager', {tasks: [{id: 'water', text: 'Water plants', done: true}]});
   await workspace.managerChecked;
-  const ownerResponse = await workspace.update('owner', {tasks: [{id: 'water', text: 'Water plants', done: false, privateCost: 200}]});
+  const ownerResponse = await workspace.update('owner', {tasks: [{id: 'water', text: 'Water plants', done: false, privateProof: 'new evidence'}]});
   assert.equal(ownerResponse.status, 200);
   workspace.resumeManager();
   const result = await managerResponse;
   assert.ok([403, 409].includes(result.status), `Changed private task metadata must reject the stale manager write; got ${result.status}.`);
-  assert.equal(workspace.store.get('jobs', 'job').tasks[0].privateCost, 200);
+  assert.equal(workspace.store.get('jobs', 'job').tasks[0].privateCost, 100);
+  assert.equal(workspace.store.get('jobs', 'job').tasks[0].privateProof, 'new evidence');
 });

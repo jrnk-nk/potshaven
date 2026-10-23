@@ -20,10 +20,11 @@ The adapter creates its schema on first connection. There is no manual SQL-edito
 
 - `potshaven_private.records`: collection/id keyed JSONB records, with stable insertion ordering.
 - `potshaven_private.metadata`: company settings, schema/initialization markers, a random private session-signing secret, and expiring sign-in attempt counters.
+- `potshaven_private.activity`: ordered, owner-only manager events with durable unread/read status, separate from workspace collections.
 - `potshaven_private.media`: immutable image bytes and their MIME types. Workspace records reference `/media/...` URLs, so photos are not repeatedly embedded in every state response.
-- Private functions implement stock deductions, inventory adjustments, recurring-job completion, linked-record removal, initialization, and calendar arithmetic.
+- Private functions implement stock deductions, inventory adjustments, recurring-job completion, linked-record removal, initialization and calendar arithmetic. Activity-aware writes insert their event in the same transaction as the operational change.
 
-Fresh databases start with the company's default branding and **no fictional operational records**. Explicit `seed: true` is intended for isolated tests or a demonstration database. Initialization is recorded, so reconnecting with a different seed setting never adds demo clients to an existing company workspace. Existing local SQLite files are not erased or automatically migrated.
+Fresh databases start with the company's default branding and **no fictional operational records**. Explicit `seed: true` is intended for isolated tests or a demonstration database. Initialization is recorded, so reconnecting with a different seed setting never adds demo clients to an existing company workspace. Existing local SQLite files are not erased or automatically migrated. The unified Sites interface keeps the existing `places` records and `placeId` job links. Disabling financial features filters API access rather than deleting stored amounts; operational updates and stock calculations retain hidden financial data.
 
 ## Transaction guarantees
 
@@ -33,7 +34,13 @@ Recurring-job completion locks the parent job, writes the completed state and a 
 
 Database settings are merged atomically. Media keys are immutable: storing the same key with identical bytes is harmless; using it for different bytes returns a conflict. A persisted random signing secret keeps valid sessions usable across cold starts; changing role passwords still invalidates old sessions in the authentication layer.
 
-`update(collection, id, patch, actor, {expected})` optionally compares the complete authorized snapshot under the record's `FOR UPDATE` lock and returns 409 if anything changed. The API requires this check for manager updates, protecting owner approvals, project deadlines and private nested fields from delayed manager writes. The schema upgrade adds an eight-argument function without deleting the prior overload, so existing function instances can finish during deployment.
+`update(collection, id, patch, actor, {expected, activity})` optionally compares the complete authorized snapshot under the record's `FOR UPDATE` lock and returns 409 if anything changed. The API uses this check for manager updates and updates that preserve hidden financial fields, protecting approvals, project deadlines and private nested details against intervening writes. Collection PATCH clients may additionally send `_expected`, a role-filtered baseline from when the form opened. The API validates that optional precondition before passing its own full current snapshot to the store; `_expected` is never persisted. Schema upgrades retain prior function overloads so existing instances can finish during deployment.
+
+The site-visit API appends one inspection to the latest site snapshot using the same locked update. A concurrent snapshot conflict is known not to have committed, so the API can reload and try up to three times; connection failures are never replayed. Stable visit IDs prevent duplicate entries or activity events for an identical resubmission. Existing inspections and private metadata are retained, and a whole-list edit cannot omit saved visits.
+
+Manager activity uses server-generated, allowlisted metadata labelled `Manager account`, not raw request bodies or user-supplied actor identities. `put`, `update` and `stock` accept an optional activity event and save it atomically with the corresponding operational write. If event insertion fails, the record or stock change rolls back too. No second best-effort notification write is needed. The API does not replay failed mutations automatically.
+
+`activityFeed(limit)` returns recent events and the total unread count from durable storage. `readActivity(id)` and `readAllActivity()` persist acknowledgements; repeated acknowledgement retains the first read time. The API restricts these operations to the owner. Read status and events survive cold starts and deployments; the UI polls while visible rather than relying on a long-lived serverless connection. Events begin with new manager changes after installation, without backfilling historical work.
 
 `recordLoginAttempt(key, accepted, now)` atomically checks and updates the sign-in limit in private metadata. A session-key HMAC scopes counters to role and request source without storing raw IP addresses or passwords. Counters survive independent Vercel instances and cold starts, block further attempts after ten failures in a 15-minute window, and reset on an accepted sign-in only when the counter is not blocked. Expired counters are cleaned up. A failed counter write is not retried or treated as a successful login.
 
@@ -46,6 +53,6 @@ const { item, movement } = await store.stock(itemId, quantity, { jobId });
 const sessionSecret = await store.getSessionSecret();
 ```
 
-All CRUD, state, settings, stock, media, and close methods are asynchronous. The factory also accepts an injected `query(text, parameters)` function and optional `close()` for isolated SQL tests.
+All CRUD, state, settings, stock, activity, media and close methods are asynchronous. The factory also accepts an injected `query(text, parameters)` function and optional `close()` for isolated SQL tests.
 
-`node --test server/postgres-store.test.js` runs the actual schema and PL/pgSQL functions against PGlite's PostgreSQL engine. It checks stock concurrency and rollback, recurrence, linked-record protection, private-schema permissions, persisted settings/sessions/media, and SQL parameterization. It does not claim that a user's live Supabase connection is configured or reachable.
+`node --test server/postgres-store.test.js` runs the actual schema and PL/pgSQL functions against PGlite's PostgreSQL engine. It checks stock concurrency and rollback, recurrence, linked-record protection, private-schema permissions, persisted settings/sessions/media, and SQL parameterization. `node --test server/activity.test.js` checks activity authorization, durable read state and atomic rollback; `npm run test:activity` checks the owner inbox and linked-site workflow in the browser. These tests do not establish that a user’s live Supabase connection is configured or reachable.

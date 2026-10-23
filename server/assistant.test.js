@@ -34,7 +34,7 @@ async function running(t, options = {}) {
 
 test('briefing identifies recorded overdue work, incomplete completion, assignments, stock and engagements', () => {
   const briefing = companyBriefing(fixture, today);
-  for (const kind of ['overdue', 'incomplete', 'unassigned', 'transport', 'stock', 'engagement', 'contract']) assert.ok(briefing.items.some(item => item.kind === kind), kind);
+  for (const kind of ['overdue', 'incomplete', 'unassigned', 'transport', 'stock', 'engagement']) assert.ok(briefing.items.some(item => item.kind === kind), kind);
   assert.match(briefing.items.find(item => item.kind === 'overdue').detail, /1 checklist task remains/);
   assert.ok(!briefing.items.some(item => item.id === 'overdue-marked-done'));
   assert.ok(!JSON.stringify(briefing).includes('+233-private'));
@@ -139,7 +139,7 @@ test('new job proposals have valid defaults; temporary workers keep real engagem
   assert.deepEqual(job.changes.crewIds, []);
   assert.equal(job.changes.status, 'Scheduled');
   assert.equal(job.changes.type, 'Maintenance');
-  const worker = validateProposal({collection: 'workers', operation: 'create', changes: {name: 'Kojo', role: 'Gardener', workforceType: 'External', engagementType: 'Until job complete', engagementStart: today, relatedJobId: 'garden', agreedRate: 150, rateBasis: 'Daily'}}, fixture, today);
+  const worker = validateProposal({collection: 'workers', operation: 'create', changes: {name: 'Kojo', role: 'Gardener', workforceType: 'External', engagementType: 'Until job complete', engagementStart: today, relatedJobId: 'garden'}}, fixture, today);
   assert.equal(worker.changes.engagementType, 'Until job complete');
   assert.equal(worker.changes.relatedJobId, 'garden');
   assert.equal(worker.changes.available, true);

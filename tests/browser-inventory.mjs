@@ -1,4 +1,4 @@
-// Inventory and business end-to-end checks. All mutations use an isolated temporary database.
+// Inventory, site reports and hidden finance end-to-end checks. All mutations use an isolated temporary database.
 // Run: node tests/browser-inventory.mjs (CHROMIUM_PATH may select a browser).
 import { chromium, expect } from '@playwright/test';
 import { createServer } from 'vite';
@@ -41,7 +41,7 @@ try {
   const post = (path, data) => api(path, { method: 'POST', body: JSON.stringify(data) });
   const prefix = 'QA Inventory';
   // A completed visit may contain tasks whose completion has not been confirmed.
-  const job = await post('/jobs', { title: prefix + ' care visit', placeId: 'place-1', date: new Date().toISOString().slice(0, 10), type: 'Maintenance', status: 'Completed', budget: 1000, crewIds: [], tasks: [{ text: 'Confirmed pruning', done: true }, { text: 'Unchecked irrigation', done: false }, 'Legacy weeding'], notes: '' });
+  const job = await post('/jobs', { title: prefix + ' care visit', placeId: 'place-1', date: new Date().toISOString().slice(0, 10), type: 'Maintenance', status: 'Completed', crewIds: [], tasks: [{ text: 'Confirmed pruning', done: true }, { text: 'Unchecked irrigation', done: false }, 'Legacy weeding'], notes: '' });
 
   await page.goto(baseURL + '/#inventory');
   await expect(page.getByRole('heading', { name: 'Plants & stock', exact: true })).toBeVisible({ timeout: 120000 });
@@ -54,16 +54,16 @@ try {
   await expect(dialog).toHaveCount(0);
   const quickStock = (await api('/state')).inventory.find(item => item.name === prefix + ' quick stock');
   assert.equal(quickStock.quantity, 7);
-  assert.equal(quickStock.cost, 0);
+  assert.equal(Object.hasOwn(quickStock, 'cost'), false);
   assert.equal(quickStock.minStock, 5);
-  console.log('PASS simple stock form saves default cost and alert settings without opening extra fields');
+  console.log('PASS simple stock form saves quantities and alerts without money fields');
   await page.getByRole('button', { name: 'Add stock', exact: false }).click();
   dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name', { exact: true }).fill(prefix + ' plant');
   await dialog.getByLabel('Quantity available').fill('11');
-  await dialog.getByText('Cost & stock alerts', { exact: true }).click();
+  await dialog.getByText('Stock alerts & notes', { exact: true }).click();
   await dialog.getByLabel('Low-stock threshold').fill('3');
-  await dialog.getByLabel(/^Unit cost/).fill('80');
+  await expect(dialog.getByLabel(/^Unit cost/)).toHaveCount(0);
   const png = await page.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = 20; canvas.height = 20; const context = canvas.getContext('2d'); context.fillStyle = '#456745'; context.fillRect(0, 0, 20, 20); return canvas.toDataURL('image/png').split(',')[1]; });
   await dialog.getByLabel('Name', { exact: true }).focus();
   await dialog.getByLabel('Stock photo').setInputFiles({ name: 'plant-photo.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
@@ -76,6 +76,8 @@ try {
   let state = await api('/state');
   const stock = state.inventory.find(item => item.name === prefix + ' plant');
   assert.equal(stock.quantity, 11);
+  // Existing finance remains stored, but is never submitted by operational forms.
+  store.update('inventory', stock.id, {cost: 80});
   assert.match(stock.image, /^(data:image\/png|\/media\/uploads\/)/);
   const photoSource = `data:image/png;base64,${png}`;
   const photoJob = await api(`/jobs/${job.id}`, { method: 'PATCH', body: JSON.stringify({ photos: [photoSource] }) });
@@ -111,16 +113,19 @@ try {
   await expect(dialog.getByRole('button', { name: 'Save changes' })).toBeEnabled();
   const uploadRequest = page.waitForRequest(request => request.method() === 'PATCH' && new URL(request.url()).pathname === `/api/inventory/${stock.id}`);
   await dialog.getByRole('button', { name: 'Save changes' }).click();
-  assert.ok(Buffer.byteLength((await uploadRequest).postData()) < 900 * 1024, 'Prepared upload JSON should stay comfortably below serverless request limits.');
+  const upload = await uploadRequest;
+  assert.equal(Object.hasOwn(upload.postDataJSON(), 'cost'), false);
+  assert.ok(Buffer.byteLength(upload.postData()) < 900 * 1024, 'Prepared upload JSON should stay comfortably below serverless request limits.');
   await expect(dialog).toHaveCount(0);
   const preparedStock = (await api('/state')).inventory.find(item => item.id === stock.id);
   const preparedPhoto = await fetch(apiOrigin + preparedStock.image);
   assert.equal(preparedPhoto.status, 200);
   assert.equal(preparedPhoto.headers.get('content-type').split(';')[0], 'image/jpeg');
   assert.ok((await preparedPhoto.arrayBuffer()).byteLength <= 600 * 1024);
-  assert.equal(preparedStock.cost, 80);
+  assert.equal(Object.hasOwn(preparedStock, 'cost'), false);
+  assert.equal(store.get('inventory', stock.id).cost, 80);
   assert.equal(preparedStock.minStock, 3);
-  console.log('PASS large camera photo is prepared below600KB with existing stock settings preserved');
+  console.log('PASS large camera photo stays below 600 KB and operational edits preserve hidden stock costs');
 
   await card.getByRole('button', { name: 'Use stock', exact: true }).click();
   dialog = page.getByRole('dialog');
@@ -134,9 +139,11 @@ try {
   const movement = state.stockMovements.find(entry => entry.inventoryId === stock.id && entry.type === 'use');
   assert.equal(movement.quantity, 3);
   assert.equal(movement.jobId, job.id);
-  assert.equal(movement.totalCost, 240);
+  assert.equal(Object.hasOwn(movement, 'totalCost'), false);
+  assert.equal(store.get('stockMovements', movement.id).totalCost, 240);
   await card.getByRole('button', { name: 'View stock history', exact: false }).click();
   await expect(page.getByRole('dialog').getByText(prefix + ' planting completed')).toBeVisible();
+  await expect(page.getByRole('dialog').getByRole('columnheader', {name: /cost|value|price/i})).toHaveCount(0);
   await expect(page.getByRole('dialog').getByRole('cell', { name: new RegExp(job.title) })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -161,57 +168,62 @@ try {
   assert.equal((await api('/state')).inventory.find(item => item.id === stock.id).quantity, 10);
   console.log('PASS job-assigned stock deduction, usage history, browser/API underflow rejection and restocking');
 
+  const concurrentStock = await post('/inventory', {name: prefix + ' concurrent stock', category: 'Plants', quantity: 20, minStock: 2, unit: 'plants'});
+  await page.reload();
+  await page.getByLabel('Search inventory').fill(concurrentStock.name);
+  const concurrentCard = page.locator('article').filter({has: page.getByRole('heading', {name: concurrentStock.name, exact: true})});
+  await concurrentCard.getByRole('button', {name: `Edit ${concurrentStock.name}`, exact: true}).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Name', {exact: true}).fill(prefix + ' renamed concurrent stock');
+  await expect(dialog.getByLabel('Quantity available')).toHaveValue('20');
+  // Another session uses stock while the owner's edit form remains open.
+  await post(`/inventory/${concurrentStock.id}/use`, {quantity: 5, jobId: job.id, note: 'Used by another session'});
+  const staleSave = page.waitForResponse(response => response.request().method() === 'PATCH' && new URL(response.url()).pathname === `/api/inventory/${concurrentStock.id}`);
+  await dialog.getByRole('button', {name: 'Save changes', exact: true}).click();
+  const rejectedSave = await staleSave;
+  assert.equal(rejectedSave.status(), 409);
+  assert.equal(rejectedSave.request().postDataJSON()._expected.quantity, 20);
+  await expect(dialog.getByRole('alert')).toBeVisible();
+  await expect(dialog.getByLabel('Name', {exact: true})).toHaveValue(prefix + ' renamed concurrent stock');
+  await expect(dialog.getByLabel('Quantity available')).toHaveValue('20');
+  assert.equal(store.get('inventory', concurrentStock.id).quantity, 15);
+  assert.equal(store.get('inventory', concurrentStock.id).name, concurrentStock.name);
+  await dialog.getByRole('button', {name: 'Cancel', exact: true}).click();
+  await page.reload();
+  await page.getByLabel('Search inventory').fill(concurrentStock.name);
+  await concurrentCard.getByRole('button', {name: `Edit ${concurrentStock.name}`, exact: true}).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Quantity available')).toHaveValue('15');
+  await dialog.getByLabel('Name', {exact: true}).fill(prefix + ' renamed concurrent stock');
+  await dialog.getByRole('button', {name: 'Save changes', exact: true}).click();
+  await expect(dialog).toHaveCount(0);
+  assert.equal(store.get('inventory', concurrentStock.id).quantity, 15);
+  assert.equal(store.get('inventory', concurrentStock.id).name, prefix + ' renamed concurrent stock');
+  console.log('PASS stale stock edits cannot undo another session’s deduction; draft stays open and refreshed edits succeed');
+
   await page.getByRole('combobox', { name: 'Inventory tools', exact: true }).selectOption('Purchase requests');
   await page.getByRole('button', { name: 'New request', exact: false }).click();
   dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Item or materials needed').fill(prefix + ' purchase request');
+  await dialog.getByLabel('Item or materials needed').fill(prefix + ' supply request');
   await dialog.getByLabel('Quantity', { exact: true }).fill('5');
-  await dialog.getByLabel(/^Estimated total/).fill('400');
+  await expect(dialog.getByLabel(/^Estimated total/)).toHaveCount(0);
+  await expect(dialog.getByLabel(/^Receipt reference/)).toHaveCount(0);
+  await expect(dialog.getByRole('option', {name: 'Receipt', exact: true})).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Save changes' }).click();
   await expect(dialog).toHaveCount(0);
-  let row = page.getByRole('row').filter({ hasText: prefix + ' purchase request' });
+  let row = page.getByRole('row').filter({ hasText: prefix + ' supply request' });
   await row.getByRole('button', { name: 'Approve', exact: true }).click();
   await expect(row.getByText('Approved', { exact: true })).toBeVisible();
-  assert.equal((await api('/state')).purchaseRequests.find(request => request.title === prefix + ' purchase request').status, 'Approved');
-  console.log('PASS purchase request creation and owner approval');
+  assert.equal((await api('/state')).purchaseRequests.find(request => request.title === prefix + ' supply request').status, 'Approved');
+  await expect(page.getByRole('columnheader', {name: /cost|price|amount/i})).toHaveCount(0);
+  console.log('PASS supply request creation and approval without prices or receipts');
 
   await page.goto(baseURL + '/#business');
-  await page.getByRole('combobox', { name: 'Business tools', exact: true }).selectOption('Payments');
-  await page.getByRole('button', { name: 'Add payment', exact: false }).click();
-  dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Place / client').selectOption('place-1');
-  await dialog.getByLabel('Description', { exact: true }).fill(prefix + ' payment');
-  await dialog.getByLabel(/^Amount/).fill('240');
-  await dialog.getByRole('button', { name: 'Save changes' }).click();
-  await expect(dialog).toHaveCount(0);
-  row = page.getByRole('row').filter({ hasText: prefix + ' payment' });
-  await row.getByRole('button', { name: 'Mark paid', exact: true }).click();
-  await expect(row.getByText('Paid', { exact: true })).toBeVisible();
-  await page.reload();
-  await page.getByRole('combobox', { name: 'Business tools', exact: true }).selectOption('Payments');
-  await expect(page.getByRole('row').filter({ hasText: prefix + ' payment' }).getByText('Paid', { exact: true })).toBeVisible();
-  console.log('PASS payment recording, paid status and reload persistence');
-
-  await page.getByRole('combobox', { name: 'Business tools', exact: true }).selectOption('Expenses');
-  await page.getByRole('button', { name: 'Record expense', exact: false }).click();
-  dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Description', { exact: true }).fill(prefix + ' transport');
-  await dialog.getByRole('combobox', { name: 'Job', exact: true }).selectOption(job.id);
-  await dialog.getByRole('combobox', { name: 'Category', exact: true }).selectOption('Transport');
-  await dialog.getByLabel(/^Amount/).fill('60');
-  await dialog.getByRole('button', { name: 'Save changes' }).click();
-  await expect(dialog).toHaveCount(0);
-  await page.getByRole('combobox', { name: 'Business tools', exact: true }).selectOption('Overview');
-  await page.getByText('Job costs & budgets', { exact: true }).click();
-  row = page.getByRole('row').filter({ hasText: job.title });
-  // 3 plants @ GHS80 plus GHS60 transport, with the remaining GHS700 shown separately.
-  await expect(row.getByRole('cell').nth(2)).toHaveText(/300/);
-  await expect(row.getByRole('cell').nth(3)).toHaveText(/700/);
-  console.log('PASS job costing combines consumed stock and direct expenses');
-
-  await page.getByRole('combobox', { name: 'Business tools', exact: true }).selectOption('Service reports');
+  await expect(page.getByRole('combobox', {name: 'Business tools', exact: true})).toHaveCount(0);
+  await page.goto(baseURL + '/#sites?site=place-1');
+  await page.getByRole('button', {name: 'Visit reports', exact: true}).click();
   await page.getByLabel('Select completed job for report').selectOption(job.id);
-  const report = page.locator('article');
+  const report = page.locator('.service-report-preview');
   await expect(report.getByText('Pending / not confirmed', { exact: true })).toBeVisible();
   await expect(report.getByText('Not individually confirmed', { exact: true })).toBeVisible();
   const message = decodeURIComponent((await page.getByRole('link', { name: 'Share summary to WhatsApp', exact: false }).getAttribute('href')).split('text=')[1]);
@@ -228,6 +240,7 @@ try {
   const html = readFileSync(await download.path(), 'utf8');
   assert.match(html, /MAINTENANCE SERVICE REPORT/);
   assert.match(html, /PotsHaven/);
+  assert.ok(!/budget|total cost|estimated cost|amount paid/i.test(html));
   assert.ok((html.match(/src="data:image\/png;base64,/g) || []).length >= 2, 'Downloaded report must embed both authenticated logo and visit photo.');
   assert.ok(!html.includes('src="/media/'), 'Downloaded report must not depend on signed-in media URLs.');
   assert.match(html, /<strong>Completed<\/strong> — Confirmed pruning/);
@@ -237,6 +250,17 @@ try {
   await page.screenshot({ path: join(artifacts, 'report-desktop.png'), fullPage: true });
   console.log('PASS report embeds authenticated images, handles media errors, and preserves task confirmation in preview/WhatsApp/download');
 
+  store.updateSettings({currency: 'USD'});
+  await page.goto(baseURL + '/#settings');
+  await expect(page.getByLabel('Currency', {exact: true})).toHaveCount(0);
+  await page.getByLabel('Company name', {exact: true}).fill('PotsHaven QA');
+  const settingsSave = page.waitForRequest(request => request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/settings');
+  await page.getByRole('button', {name: 'Save company settings', exact: true}).click();
+  assert.equal(Object.hasOwn((await settingsSave).postDataJSON(), 'currency'), false);
+  await expect.poll(() => store.settings().companyName).toBe('PotsHaven QA');
+  assert.equal(store.settings().currency, 'USD');
+  console.log('PASS branding settings preserve the hidden stored currency');
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(baseURL + '/#inventory');
   await expect(page.getByRole('heading', { name: 'Plants & stock', exact: true })).toBeVisible();
@@ -244,12 +268,12 @@ try {
   await page.screenshot({ path: join(artifacts, 'inventory-mobile.png'), fullPage: true });
   await page.getByRole('button', { name: 'Open menu', exact: true }).click();
   const navigation = page.getByRole('navigation', { name: 'Main navigation' });
-  if (!(await navigation.getByRole('button', { name: 'Business', exact: true }).isVisible())) await navigation.getByRole('button', { name: 'More tools', exact: false }).click();
-  await navigation.getByRole('button', { name: 'Business', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Business', exact: true })).toBeVisible();
+  await expect(navigation.getByRole('button', {name: 'Business', exact: true})).toHaveCount(0);
+  await navigation.getByRole('button', {name: 'Sites', exact: true}).click();
+  await expect(page.getByRole('heading', {name: 'Sites', exact: true})).toBeVisible();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 2), false);
   assert.deepEqual(problems, []);
-  console.log('PASS mobile inventory/business layout and navigation, with no browser errors');
+  console.log('PASS mobile inventory/sites navigation and no money tools or browser errors');
 } catch (error) {
   console.error(error);
   if (page) await page.screenshot({ path: join(artifacts, 'failure.png'), fullPage: true }).catch(() => {});

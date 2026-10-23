@@ -33,7 +33,7 @@ test('Vercel retains rewrite paths, uses durable PostgreSQL and authenticates ow
   const cookie=response.headers.get('set-cookie').split(';')[0];headers.Cookie=cookie;
   response=await fetch(server.url+'/api/index?__potshaven_path=/api/state',{headers});let data=await response.json();assert.equal(data.role,'owner');assert.equal(data.places.length,0);assert.equal(data.settings.companyName,'PotsHavenGh');
   const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6x8AAAAASUVORK5CYII=';
-  response=await fetch(server.url+'/api/index?__potshaven_path=/api/inventory',{method:'POST',headers,body:JSON.stringify({name:'Supabase plant',quantity:5,category:'Plants',image:png,cost:20})});assert.equal(response.status,201);const plant=await response.json();assert.match(plant.image,/^\/media\/uploads\//);
+  response=await fetch(server.url+'/api/index?__potshaven_path=/api/inventory',{method:'POST',headers,body:JSON.stringify({name:'Supabase plant',quantity:5,category:'Plants',image:png})});assert.equal(response.status,201);const plant=await response.json();assert.match(plant.image,/^\/media\/uploads\//);
   response=await fetch(server.url+'/api/index?__potshaven_path='+plant.image,{headers});assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/image\/png/);assert.match(response.headers.get('cache-control'),/private/);assert.ok((await response.arrayBuffer()).byteLength>20);
   response=await fetch(server.url+'/api/index?__potshaven_path='+plant.image);assert.equal(response.status,401);
   // A second function instance shares records, media and session signing secret.

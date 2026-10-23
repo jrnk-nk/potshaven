@@ -29,6 +29,7 @@ async function sessionPage() {
    if(body.password!=='fixture-password')return reply(401,{error:'Incorrect password or role is not configured.'});
    session.signedIn=true;session.role=body.role;return reply(200,{role:body.role,demoMode:false});
   }
+  if(path==='/api/activity')return session.signedIn&&session.role==='owner'?reply(200,{items:[],unreadCount:0}):reply(session.signedIn?403:401,{error:'Owner access required.'});
   if(path==='/api/auth/logout') {session.signedIn=false;return reply(200,{ok:true});}
   if(path==='/api/places'&&request.method()==='POST'&&session.pendingCreate){const pending=session.pendingCreate;session.pendingCreate=null;await pending.promise;return reply(201,{...request.postDataJSON(),id:'late-owner-record',client:'Owner-only financial agreement',budget:12345});}
   if(path==='/api/state') {
@@ -57,11 +58,11 @@ try {
  await expect(normal.page.getByRole('heading',{name:'Welcome back.'})).toBeVisible();
  console.log('PASS wrong passwords stay on sign-in and show the authentication error');
  await login(normal.page);
- await expect(normal.page.getByRole('heading',{name:'Places & clients',exact:true})).toBeVisible();
+ await expect(normal.page.getByRole('heading',{name:'Sites',exact:true})).toBeVisible();
  await expect(normal.page.getByText('Private hotel',{exact:true})).toBeVisible();
  await expect(normal.page.locator('.sidebar-account')).toContainText('Business owner');
  await normal.page.reload();
- await expect(normal.page.getByRole('heading',{name:'Places & clients',exact:true})).toBeVisible();
+ await expect(normal.page.getByRole('heading',{name:'Sites',exact:true})).toBeVisible();
  assert.equal(normal.session.loginCalls,2,'A retained session must not submit another sign-in.');
  console.log('PASS an accepted owner login opens saved records and the session survives reload');
  normal.session.signedIn=false;
@@ -69,7 +70,7 @@ try {
  await expect(normal.page.getByRole('heading',{name:'Welcome back.'})).toBeVisible();
  await expect(normal.page.getByText('Private hotel',{exact:true})).toHaveCount(0);
  await login(normal.page,'manager');
- await expect(normal.page.getByRole('heading',{name:'Places & clients',exact:true})).toBeVisible();
+ await expect(normal.page.getByRole('heading',{name:'Sites',exact:true})).toBeVisible();
  await expect(normal.page.locator('.sidebar-account')).toContainText('Manager');
  console.log('PASS an expired session removes private records and manager sign-in opens the workspace');
  await normal.page.close();
@@ -78,11 +79,11 @@ try {
  await login(outage.page);
  await expect(outage.page.getByRole('heading',{name:'Your workspace isn’t connected yet'})).toBeVisible({timeout:15000});
  await expect(outage.page.getByText('The saved company records could not be loaded. Please retry.',{exact:true})).toBeVisible();
- await expect(outage.page.getByRole('heading',{name:'Places & clients',exact:true})).toHaveCount(0);
+ await expect(outage.page.getByRole('heading',{name:'Sites',exact:true})).toHaveCount(0);
  assert.equal(outage.session.loginCalls,1);
  outage.session.failState=false;
  await outage.page.getByRole('button',{name:'Try again',exact:true}).click();
- await expect(outage.page.getByRole('heading',{name:'Places & clients',exact:true})).toBeVisible();
+ await expect(outage.page.getByRole('heading',{name:'Sites',exact:true})).toBeVisible();
  assert.equal(outage.session.loginCalls,1,'Opening the workspace after a database outage must not resubmit the password.');
  console.log('PASS an accepted sign-in with unavailable company data shows the actual error and retries without another password');
  await outage.page.close();
@@ -93,14 +94,14 @@ try {
  await stale.page.evaluate(()=>window.dispatchEvent(new Event('online')));await staleStarted;
  const loggedIn=stale.page.waitForResponse(response=>new URL(response.url()).pathname==='/api/auth/login'&&response.status()===200);
  await login(stale.page);await loggedIn;release();
- await expect(stale.page.getByRole('heading',{name:'Places & clients',exact:true})).toBeVisible();
+ await expect(stale.page.getByRole('heading',{name:'Sites',exact:true})).toBeVisible();
  await expect(stale.page.getByText('Private hotel',{exact:true})).toBeVisible();
  assert.equal(stale.session.loginCalls,1);
  console.log('PASS an earlier unauthorized request cannot discard a newly accepted session');
  await stale.page.close();
 
  const signingOut=await sessionPage();await login(signingOut.page,'manager');
- await expect(signingOut.page.getByRole('heading',{name:'Places & clients',exact:true})).toBeVisible();
+ await expect(signingOut.page.getByRole('heading',{name:'Sites',exact:true})).toBeVisible();
  await signingOut.page.goto(origin+'/#settings');
  await expect(signingOut.page.getByRole('heading',{name:'Your account',exact:true})).toBeVisible();
  await signingOut.page.evaluate(()=>sessionStorage.setItem('potshaven:studio-draft:private-owner-space','Private owner idea'));
@@ -113,20 +114,20 @@ try {
  await signingOut.page.close();
 
  const switched=await sessionPage();await login(switched.page);
- await expect(switched.page.getByRole('heading',{name:'Places & clients',exact:true})).toBeVisible();
+ await expect(switched.page.getByRole('heading',{name:'Sites',exact:true})).toBeVisible();
  let releaseCreate;
  const createPromise=new Promise(resolve=>{releaseCreate=resolve;});switched.session.pendingCreate={promise:createPromise};
- await switched.page.getByRole('button',{name:'Add a place',exact:true}).click();
- await switched.page.getByLabel('Place name',{exact:true}).fill('Owner-only late place');
+ await switched.page.getByRole('button',{name:'Add a site',exact:true}).click();
+ await switched.page.getByLabel('Site name',{exact:true}).fill('Owner-only late place');
  await switched.page.getByLabel('Client / company',{exact:true}).fill('Owner-only client');
  await switched.page.getByLabel('Address or location',{exact:true}).fill('Accra');
  const createStarted=switched.page.waitForRequest(request=>new URL(request.url()).pathname==='/api/places'&&request.method()==='POST');
- await switched.page.getByRole('button',{name:'Add place',exact:true}).click();await createStarted;
+ await switched.page.getByRole('button',{name:'Add site',exact:true}).click();await createStarted;
  switched.session.signedIn=false;
  await switched.page.evaluate(()=>window.dispatchEvent(new Event('online')));
  await expect(switched.page.getByRole('heading',{name:'Welcome back.'})).toBeVisible();
  await login(switched.page,'manager');
- await expect(switched.page.getByRole('heading',{name:'Places & clients',exact:true})).toBeVisible();
+ await expect(switched.page.getByRole('heading',{name:'Sites',exact:true})).toBeVisible();
  const lateResponse=switched.page.waitForResponse(response=>new URL(response.url()).pathname==='/api/places'&&response.status()===201);
  releaseCreate();await lateResponse;
  await expect(switched.page.getByText('Owner-only late place',{exact:true})).toHaveCount(0);

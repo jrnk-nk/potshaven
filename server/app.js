@@ -3,12 +3,15 @@ import { randomBytes, randomUUID, createHash, createHmac, timingSafeEqual } from
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { fetch, EnvHttpProxyAgent } from 'undici';
 import { createStore, collections, AppError } from './store.js';
 import {decodeDesignReference, referenceUploads, instructionHistory, conversationPrompt} from './design-conversation.js';
 import {databaseFailure} from './database-diagnostics.js';
 import {installAssistant} from './assistant.js';
 import {workspaceForRole, recordForRole, collectionForRole, canReadCollection, authorizeMutation, referencedMedia, assertMediaReferences, preserveOperationalMetadata} from './access.js';
+import {assertNoFinancialFields, withoutFinancialFields, preserveFinancialMetadata} from './financial-access.js';
+import {installActivity, managerActivity} from './activity.js';
 
 const safeEqual = (left, right) => {
   const a = Buffer.from(String(left || '')), b = Buffer.from(String(right || ''));
@@ -147,6 +150,7 @@ export function createApp({
   });
   app.post('/api/auth/logout', (req, res) => { res.clearCookie('potshaven_session'); res.json({ ok: true }); });
   app.use('/api', (req, res, next) => req.role ? next() : next(new AppError('Please sign in to continue.', 401)));
+  installActivity(app, {store});
   installAssistant(app, {store, key: imageKey, model: assistantModel, fetchAssistant});
   app.get('/api/state', async (req, res, next) => {
     try { res.json(await pictures({ ...workspaceForRole(await store.state(), req.role), role: req.role, demoMode, imageGenerationConfigured: req.role === 'owner' && Boolean(imageKey), assistantConfigured: Boolean(imageKey), ...(req.role === 'owner' ? {imageModel, imageQuality, imageSize} : {}) })); }
@@ -162,21 +166,58 @@ export function createApp({
         if (payload.vehicleId && !await store.get('vehicles', payload.vehicleId)) throw new AppError('Choose a vehicle already approved in the fleet.', 409);
         if (payload.placeId && !await store.get('places', payload.placeId)) throw new AppError('Choose an existing place.', 409);
       }
-      return preserveOperationalMetadata(payload, existing);
+      return preserveFinancialMetadata(preserveOperationalMetadata(payload, existing), existing);
     }
-    return payload;
+    return preserveFinancialMetadata(payload, existing);
   }
+  app.patch('/api/places/:id', async (req, res, next) => {
+    if (!req.body || !Object.hasOwn(req.body, 'inspection')) return next();
+    try {
+      if (Object.keys(req.body).length !== 1) throw new AppError('Save the site visit separately from other site changes.');
+      const entry = req.body.inspection;
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.id !== 'string' || !/^[a-zA-Z0-9_-]{1,200}$/.test(entry.id)) throw new AppError('A unique site visit reference is required.');
+      if (typeof entry.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || Number.isNaN(Date.parse(entry.date)) || new Date(entry.date).toISOString().slice(0, 10) !== entry.date) throw new AppError('Choose a valid site visit date.');
+      if (Array.isArray(entry.photos) && entry.photos.length > 4) throw new AppError('Add up to four photos to a site visit.');
+      // New visits use the same operational fields for both roles. Existing
+      // private metadata is read inside the transaction loop and never echoed.
+      const payload = authorizeMutation('manager', 'places', 'update', {inspections: [entry]});
+      if (req.role === 'manager' && referencedMedia(payload).size) assertMediaReferences(payload, await managerMedia());
+      const prepared = (await pictures(payload)).inspections[0];
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const previous = await store.get('places', req.params.id);
+        if (!previous) throw new AppError('Site not found.', 404);
+        const visits = Array.isArray(previous.inspections) ? previous.inspections : [];
+        const duplicate = visits.find(visit => visit?.id === prepared.id);
+        if (duplicate) {
+          if (!isDeepStrictEqual(duplicate, prepared)) throw new AppError('This visit reference already belongs to a saved visit. Refresh before recording another visit.', 409);
+          return res.json(await pictures(recordForRole('places', previous, req.role)));
+        }
+        const patch = {inspections: [prepared, ...visits]};
+        const activity = await managerActivity(store, {role: req.role, collection: 'places', operation: 'update', record: {...previous, ...patch}, previous});
+        try {
+          const record = await store.update('places', req.params.id, patch, req.role === 'owner' ? 'Owner' : 'Manager', {expected: previous, activity});
+          return res.json(await pictures(recordForRole('places', record, req.role)));
+        } catch (error) {
+          // Retry only a confirmed, uncommitted compare-and-swap conflict.
+          // Connection failures may have committed and must never be replayed.
+          if (attempt === 2 || error.status !== 409 || error.message !== 'This record changed while you were editing. Refresh and try again.') throw error;
+        }
+      }
+    } catch (error) {next(error);}
+  });
   app.patch('/api/settings', async (req, res, next) => {
-    try { if (req.role !== 'owner') throw new AppError('Only the owner can update company settings.', 403); res.json(await pictures(await store.updateSettings(await pictures(req.body)))); } catch (error) { next(error); }
+    try { if (req.role !== 'owner') throw new AppError('Only the owner can update company settings.', 403); assertNoFinancialFields(req.body); res.json(await pictures(withoutFinancialFields(await store.updateSettings(await pictures(req.body))))); } catch (error) { next(error); }
   });
   app.post('/api/inventory/:id/:operation', async (req, res, next) => {
     if (!['use', 'restock'].includes(req.params.operation)) return next();
     try {
       if (req.role !== 'owner' && req.params.operation !== 'use') throw new AppError('Only the owner can receive or adjust stock.', 403);
+      assertNoFinancialFields(req.body);
       const { quantity, jobId, note } = req.body;
       if (req.role === 'manager' && (typeof jobId !== 'string' || !jobId.trim())) throw new AppError('Choose the job this stock was used on.');
-      const result = await store.stock(req.params.id, quantity, { type: req.params.operation, jobId, note, actor: req.role === 'owner' ? 'Owner' : 'Manager' });
-      res.json(await pictures(req.role === 'owner' ? result : {item: recordForRole('inventory', result.item, req.role), movement: recordForRole('stockMovements', result.movement, req.role)}));
+      const activity = await managerActivity(store, {role: req.role, collection: 'inventory', operation: req.params.operation, record: await store.get('inventory', req.params.id), quantity, jobId});
+      const result = await store.stock(req.params.id, quantity, { type: req.params.operation, jobId, note, actor: req.role === 'owner' ? 'Owner' : 'Manager', activity });
+      res.json(await pictures({item: recordForRole('inventory', result.item, req.role), movement: recordForRole('stockMovements', result.movement, req.role)}));
     } catch (error) { next(error); }
   });
   async function savedDesignImage(url) {
@@ -314,7 +355,9 @@ export function createApp({
       authorizePurchase(req);
       const id = randomUUID();
       const defaults = req.params.collection === 'jobs' ? { status: 'Scheduled', type: 'Maintenance', crewIds: [], tasks: [] } : req.params.collection === 'inventory' ? { quantity: 0, minStock: 0, cost: 0, category: 'Plants', unit: 'plants' } : req.params.collection === 'purchaseRequests' ? { status: 'Pending', requestedBy: req.role } : {};
-      const record = await store.put(req.params.collection, await pictures({ ...defaults, ...payload, id }));
+      const prepared = await pictures({ ...defaults, ...payload, id });
+      const activity = await managerActivity(store, {role: req.role, collection: req.params.collection, operation: 'create', record: prepared});
+      const record = await store.put(req.params.collection, prepared, {activity});
       res.status(201).json(await pictures(recordForRole(req.params.collection, record, req.role)));
     } catch (error) { next(error); }
   });
@@ -322,14 +365,24 @@ export function createApp({
     try {
       if (!canReadCollection(req.role, req.params.collection)) throw new AppError('This information is available to the business owner only.', 403);
       const existing = await store.get(req.params.collection, req.params.id);
+      if (req.body && Object.hasOwn(req.body, '_expected')) {
+        const {_expected: expected, ...changes} = req.body;
+        if (!expected || typeof expected !== 'object' || Array.isArray(expected) || expected.id !== req.params.id) throw new AppError('Refresh this record before saving your changes.');
+        if (!existing) throw new AppError('Record not found.', 404);
+        const visible = await pictures(recordForRole(req.params.collection, existing, req.role));
+        if (!isDeepStrictEqual(expected, visible)) throw new AppError('This record changed while you were editing. Refresh and try again.', 409);
+        req.body = changes;
+      }
       const payload = await checkedPayload(req, req.params.collection, 'update', existing);
       authorizePurchase(req, existing);
-      const record = await store.update(req.params.collection, req.params.id, await pictures(payload), req.role === 'owner' ? 'Owner' : 'Manager', req.role === 'manager' ? {expected: existing} : undefined);
+      const prepared = await pictures(payload);
+      const activity = await managerActivity(store, {role: req.role, collection: req.params.collection, operation: 'update', record: {...existing, ...prepared}, previous: existing});
+      const record = await store.update(req.params.collection, req.params.id, prepared, req.role === 'owner' ? 'Owner' : 'Manager', {expected: existing, activity});
       res.json(await pictures(recordForRole(req.params.collection, record, req.role)));
     } catch (error) { next(error); }
   });
   app.delete('/api/:collection/:id', async (req, res, next) => {
-    try { authorizeMutation(req.role, req.params.collection, 'delete'); authorizePurchase(req, await store.get(req.params.collection, req.params.id)); await store.remove(req.params.collection, req.params.id); res.status(204).end(); } catch (error) { next(error); }
+    try { const existing = await store.get(req.params.collection, req.params.id); authorizeMutation(req.role, req.params.collection, 'delete', {}, existing); authorizePurchase(req, existing); await store.remove(req.params.collection, req.params.id); res.status(204).end(); } catch (error) { next(error); }
   });
   app.use('/api', (req, res, next) => next(new AppError('API endpoint not found.', 404)));
   const dist = join(projectRoot, 'dist');

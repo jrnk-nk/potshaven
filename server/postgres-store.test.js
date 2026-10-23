@@ -217,7 +217,7 @@ test('PostgreSQL upgrades deployed schema version one without losing data, sessi
   const upgraded=await createPostgresStore('',{query});
   assert.equal((await upgraded.get('places','existing')).name,'Existing customer');
   assert.equal(await upgraded.getSessionSecret(),secret);
-  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value,'2');
+  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value,'3');
   const signatures=(await query("SELECT to_regprocedure('potshaven_private.update_record(text,text,jsonb,text,text,text,text)') AS old, to_regprocedure('potshaven_private.update_record(text,text,jsonb,text,text,text,text,jsonb)') AS guarded")).rows[0];
   assert.ok(signatures.old);
   assert.ok(signatures.guarded);
@@ -227,11 +227,11 @@ test('PostgreSQL upgrades deployed schema version one without losing data, sessi
   assert.equal((await upgraded.update('places','existing',{name:'Updated customer'},'Manager',{expected})).name,'Updated customer');
   await createPostgresStore('',{query});
   assert.equal((await upgraded.get('places','existing')).name,'Updated customer');
-  await query("UPDATE potshaven_private.metadata SET value='\"3\"'::jsonb WHERE key='schemaVersion'");
+  await query("UPDATE potshaven_private.metadata SET value='\"4\"'::jsonb WHERE key='schemaVersion'");
   await createPostgresStore('',{query});
-  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value,'3','Older application instances must not downgrade a future migration marker.');
+  assert.equal((await query("SELECT value FROM potshaven_private.metadata WHERE key='schemaVersion'")).rows[0].value,'4','Older application instances must not downgrade a future migration marker.');
   // Restore the fixture marker so subsequent independent tests use this schema.
-  await query("UPDATE potshaven_private.metadata SET value='\"2\"'::jsonb WHERE key='schemaVersion'");
+  await query("UPDATE potshaven_private.metadata SET value='\"3\"'::jsonb WHERE key='schemaVersion'");
 });
 
 test('PostgreSQL sign-in limits are atomic across independent cloud instances and expire after fifteen minutes',async()=>{
@@ -284,7 +284,7 @@ test('Supabase adapter composes with serverless API, authenticated photos and co
     const cookie=login.headers.get('set-cookie').split(';')[0];
     const headers={'Content-Type':'application/json',Cookie:cookie};
     const picture='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jNI0AAAAASUVORK5CYII=';
-    const plantResponse=await fetch(base+'/api/inventory',{method:'POST',headers,body:JSON.stringify({name:'Hotel peace lily',quantity:8,cost:75,image:'data:image/png;base64,'+picture})});
+    const plantResponse=await fetch(base+'/api/inventory',{method:'POST',headers,body:JSON.stringify({name:'Hotel peace lily',quantity:8,image:'data:image/png;base64,'+picture})});
     assert.equal(plantResponse.status,201);
     const plant=await plantResponse.json();
     assert.match(plant.image,/^\/media\/uploads\/[a-f0-9]{64}\.png$/);
@@ -298,7 +298,7 @@ test('Supabase adapter composes with serverless API, authenticated photos and co
     const usage=await fetch(`${base}/api/inventory/${plant.id}/use`,{method:'POST',headers,body:JSON.stringify({quantity:3,jobId:job.id})});
     assert.equal(usage.status,200);
     assert.equal((await usage.json()).item.quantity,5);
-    const purchaseResponse=await fetch(base+'/api/purchaseRequests',{method:'POST',headers,body:JSON.stringify({title:'Replacement plants',quantity:3,estimatedCost:225})});
+    const purchaseResponse=await fetch(base+'/api/purchaseRequests',{method:'POST',headers,body:JSON.stringify({title:'Replacement plants',quantity:3})});
     assert.equal(purchaseResponse.status,201);
     const purchase=await purchaseResponse.json();
     const managerLogin=await fetch(base+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role:'manager',password:env.APP_MANAGER_PASSWORD})});
@@ -312,7 +312,7 @@ test('Supabase adapter composes with serverless API, authenticated photos and co
     const state=await restored.json();
     assert.equal(state.role,'owner');
     assert.equal(state.inventory[0].quantity,5);
-    assert.equal(state.stockMovements[0].totalCost,225);
+    assert.equal(state.stockMovements[0].totalCost,undefined);
     assert.ok(!JSON.stringify(state).includes(picture));
   }finally{
     await new Promise(resolve=>server.close(resolve));

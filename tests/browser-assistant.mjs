@@ -36,12 +36,17 @@ let holdReply = false;
 let releaseReply;
 let failRead = false;
 let failWrite = false;
+let changeAfterRead = false;
 let response = {
   reply: 'The hotel visit has no crew or vehicle. Here is a plan for you to review.',
   actions: [
     {id: 'assign', label: 'Assign the hotel visit', collection: 'jobs', operation: 'update', recordId: 'hotel-job', changes: {crewIds: ['ama'], vehicleId: 'pickup'}, warnings: ['Check travel time before confirming the route.']},
     {id: 'new', label: 'Schedule a follow-up visit', collection: 'jobs', operation: 'create', changes: {title: 'Hotel follow-up', placeId: 'hotel', date: '2026-10-30', time: '08:00', type: 'Maintenance', status: 'Scheduled', crewIds: ['ama'], vehicleId: 'pickup', tasks: [{title: 'Check irrigation', done: false}]}},
     {id: 'other-assignment', label: 'Alternative crew assignment', collection: 'jobs', operation: 'update', recordId: 'hotel-job', changes: {crewIds: []}},
+    {id: 'pay', label: 'Change worker pay', collection: 'workers', operation: 'update', recordId: 'ama', changes: {agreedRate: 900, rateBasis: 'Daily'}},
+    {id: 'budget', label: 'Set visit budget', collection: 'jobs', operation: 'update', recordId: 'hotel-job', changes: {budget: 1200}},
+    {id: 'nested-cost', label: 'Add costed task', collection: 'jobs', operation: 'update', recordId: 'hotel-job', changes: {tasks: [{title: 'Water plants', done: true, unitCost: 20}]}},
+    {id: 'receipt', label: 'Link receipt details', collection: 'issues', operation: 'create', changes: {title: 'Review supply', receiptReference: 'private-reference'}},
   ],
 };
 
@@ -50,6 +55,7 @@ try {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path === '/api/state') return route.fulfill({json: state});
+    if (path === '/api/activity') return route.fulfill({json: {items: [], unreadCount: 0}});
     if (path === '/api/assistant/briefing') {
       briefings++;
       return route.fulfill({json: {summary: 'One visit needs people and transport.', items: [{id: 'hotel-unassigned', title: 'Hotel entrance care needs a crew', detail: 'Assign people before the visit.', page: 'schedule', kind: 'unassigned'}]}});
@@ -63,11 +69,19 @@ try {
     }
     if (path === '/api/jobs' && request.method() === 'GET') {
       if (failRead) {failRead = false; return route.fulfill({status: 503, json: {error: 'Records are temporarily unavailable.'}});}
+      if (changeAfterRead) {
+        changeAfterRead = false;
+        const snapshot = structuredClone(state.jobs);
+        state.jobs[0].notes = 'New instruction from another session';
+        return route.fulfill({json: snapshot});
+      }
       return route.fulfill({json: state.jobs});
     }
     if (path === '/api/jobs/hotel-job' && request.method() === 'PATCH') {
-      const changes = request.postDataJSON();
-      writes.push({method: request.method(), changes});
+      const {_expected, ...changes} = request.postDataJSON();
+      assert.ok(_expected, 'Assistant updates must carry the record used to prepare the suggestion.');
+      writes.push({method: request.method(), changes, expected: _expected});
+      if (JSON.stringify(_expected) !== JSON.stringify(state.jobs[0])) return route.fulfill({status: 409, json: {error: 'This record changed. Refresh and try again.'}});
       Object.assign(state.jobs[0], changes);
       return route.fulfill({json: state.jobs[0]});
     }
@@ -101,6 +115,9 @@ try {
   await expect(assignment.getByText('Ama Mensah', {exact: true})).toBeVisible();
   await expect(assignment.getByText('Green pickup', {exact: true})).toBeVisible();
   await expect(assignment.getByText('Check travel time before confirming the route.', {exact: true})).toBeVisible();
+  await expect(assistant.locator('.ca-proposal')).toHaveCount(3);
+  for (const label of ['Change worker pay', 'Set visit budget', 'Add costed task', 'Link receipt details']) await expect(assistant.getByRole('article', {name: label, exact: true})).toHaveCount(0);
+  await expect(assistant.locator('.ca-proposal').getByText(/Agreed pay|Pay basis|Budget|Unit Cost|Receipt Reference/)).toHaveCount(0);
   assert.equal(writes.length, 0, 'AI replies must not save changes without review.');
   assert.equal(requests.length, 1);
   assert.match(requests[0].today, /^\d{4}-\d{2}-\d{2}$/);
@@ -122,7 +139,8 @@ try {
   assert.equal(writes.length, 2);
   assert.equal(state.jobs.length, 2);
   assert.ok(briefings >= 2, 'Saving company work should update the briefing.');
-  console.log('PASS individual changes persist once and stale proposals cannot overwrite newer records');
+  assert.ok(writes.every(write => !/agreedRate|rateBasis|budget|unitCost|receiptReference/.test(JSON.stringify(write.changes))));
+  console.log('PASS financial suggestions are suppressed while operational changes save once and stale proposals stay blocked');
 
   response = {reply: 'The follow-up is ready. Ama has one incomplete task on the hotel visit.', actions: []};
   await composer.fill('Who still has unfinished work?');
@@ -237,6 +255,23 @@ try {
   assert.deepEqual(requests.at(-1).history, [], 'A manager conversation must not include earlier owner chat.');
   assert.deepEqual(runtimeErrors, []);
   console.log('PASS a role change clears earlier owner chat and discards late owner responses before manager use');
+
+  response = {reply: 'Review the updated care instructions.', actions: [{id: 'race', label: 'Update care instructions', collection: 'jobs', operation: 'update', recordId: 'hotel-job', changes: {notes: 'Replace the earlier care instructions'}}]};
+  await composer.fill('Update the care instructions for the hotel visit.');
+  await send.click();
+  const racedProposal = assistant.getByRole('article', {name: 'Update care instructions', exact: true});
+  await expect(racedProposal).toBeVisible();
+  const writesBeforeRace = writes.length;
+  changeAfterRead = true;
+  await racedProposal.getByRole('button', {name: 'Save this change', exact: true}).click();
+  await expect(racedProposal.getByRole('alert')).toContainText('This record changed');
+  await expect(racedProposal.getByRole('button', {name: 'Review your records', exact: true})).toBeDisabled();
+  assert.equal(writes.length, writesBeforeRace + 1);
+  assert.notEqual(writes.at(-1).expected.notes, state.jobs[0].notes);
+  assert.equal(state.jobs[0].notes, 'New instruction from another session');
+  assert.deepEqual(runtimeErrors, []);
+  console.log('PASS the server precondition protects an assistant suggestion when another edit lands after its freshness check');
+
 
 } finally {
   await browser.close();

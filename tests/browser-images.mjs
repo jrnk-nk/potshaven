@@ -49,6 +49,7 @@ try {
  const state=Object.fromEntries(collections.map(name=>[name,[]]));
  Object.assign(state,{settings:{companyName:'Image test company',logo:'/test-wide-logo.png',currency:'GHS',watermark:'Image test'},role:'owner',demoMode:true,imageGenerationConfigured:false});
  state.designs=[{id:'image-test',title:'Brand export test',image:'/test-photo.png',published:true,source:'Portfolio upload'}];
+ await page.route('**/api/activity?*',route=>route.fulfill({json:{items:[],unreadCount:0}}));
  await page.route('**/api/state',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(state)}));
  await page.route('**/test-wide-logo.png',route=>route.fulfill({status:200,contentType:'image/png',body:Buffer.from(fixture.logo,'base64')}));
  await page.route('**/test-photo.png',route=>route.fulfill({status:200,contentType:'image/png',body:Buffer.from(fixture.photo,'base64')}));
@@ -67,7 +68,7 @@ try {
  assert.ok(drawn,'Same-origin logo was not included in the downloaded image');assert.equal(drawn.width/drawn.height,4);assert.ok(Math.abs(drawn.width-drawn.canvasWidth*.18)<.01);
  console.log('PASS same-origin wide logo stays legible, proportional and uncropped in branded PNG downloads');
  await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/#overview`);
- await page.getByRole('button',{name:'Add a job',exact:true}).click();
+ await page.getByRole('button',{name:'Schedule a visit',exact:true}).click();
  await page.getByText('More job details',{exact:true}).click();
  const upload=page.getByLabel('Add completion photo from WhatsApp or camera',{exact:true});
  const file={name:'completion.png',mimeType:'image/png',buffer:Buffer.from(fixture.photo,'base64')};

@@ -7,5 +7,6 @@ import '@fontsource/dm-sans/latin-700.css';
 import '@fontsource/dm-serif-display/latin-400.css';
 import './styles.css';
 import {AppProvider} from './state';
+import {ActivityProvider} from './activity-state';
 import App from './App';
-createRoot(document.getElementById('root')!).render(<React.StrictMode><AppProvider><App/></AppProvider></React.StrictMode>);
+createRoot(document.getElementById('root')!).render(<React.StrictMode><AppProvider><ActivityProvider><App/></ActivityProvider></AppProvider></React.StrictMode>);

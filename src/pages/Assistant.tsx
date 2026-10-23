@@ -2,7 +2,8 @@ import {useEffect, useRef, useState, type FormEvent, type KeyboardEvent} from 'r
 import {ArrowRight, ArrowUp, Check, ChevronDown, CircleAlert, LoaderCircle, RefreshCw, Sparkles, X} from 'lucide-react';
 import {api, ApiError, today, useApp, type AppData} from '../state';
 import './Assistant.css';
-import {canAccessPage} from '../access';
+import {canAccessPage, canonicalPage} from '../access';
+import {FINANCIAL_FEATURES_ENABLED} from '../features';
 
 type Action = {id: string; label: string; collection: 'jobs' | 'workers' | 'vehicles' | 'issues'; operation: 'create' | 'update'; recordId?: string; changes: Record<string, any>; warnings?: string[]};
 type Proposal = Action & {key: string; baseline?: Record<string, any>};
@@ -12,9 +13,13 @@ type Briefing = {summary: string; items: BriefingItem[]};
 type SaveState = {status: 'saving' | 'saved' | 'blocked' | 'uncertain' | 'check-failed'; error?: string};
 
 const prompts = ['What needs attention?', 'Who has unfinished work?', 'Help plan tomorrow'];
-const pages = new Set(['overview', 'schedule', 'projects', 'places', 'team', 'inventory', 'business']);
+const pages = new Set(['overview', 'schedule', 'sites', 'team', 'inventory', ...(FINANCIAL_FEATURES_ENABLED ? ['business'] : [])]);
+// Ignore disabled proposals entirely so their labels cannot advertise a change
+// that is unavailable. The API independently enforces the same restriction.
+const financialField = (key: string) => /cost|price|amount|budget|salary|wage|payment|invoice|profit|revenue|payroll|currency|agreedrate|ratebasis|bankaccount|bankdetails|payrate|receiptreference|receiptimage|paiddate/i.test(key.replace(/[^a-z]/gi, ''));
+const containsFinancialFields = (value: unknown): boolean => Boolean(value && typeof value === 'object' && (Array.isArray(value) ? value.some(containsFinancialFields) : Object.entries(value).some(([key, child]) => financialField(key) || containsFinancialFields(child))));
 const collections = new Set(['jobs', 'workers', 'vehicles', 'issues']);
-const fields: Record<string, string> = {title: 'Title', name: 'Name', date: 'Date', time: 'Start time', deadline: 'Deadline', crewIds: 'People', vehicleId: 'Vehicle', placeId: 'Place', status: 'Status', type: 'Type', tasks: 'Checklist', notes: 'Instructions', recurrence: 'Repeat', priority: 'Priority', role: 'Role', phone: 'Phone', workforceType: 'Worker type', engagementType: 'Agreement', engagementStart: 'Starts', engagementEnd: 'Ends', startDate: 'Starts', endDate: 'Ends', agreedRate: 'Agreed pay', rateBasis: 'Pay basis', relatedJobId: 'Linked job', agreementNotes: 'Agreement notes', agreementStatus: 'Agreement status', agreementReference: 'Agreement reference', skills: 'Skills', available: 'Available', registration: 'Registration', capacity: 'Capacity'};
+const fields: Record<string, string> = {title: 'Title', name: 'Name', date: 'Date', time: 'Start time', deadline: 'Deadline', crewIds: 'People', vehicleId: 'Vehicle', placeId: 'Site', status: 'Status', type: 'Type', tasks: 'Checklist', notes: 'Instructions', recurrence: 'Repeat', priority: 'Priority', role: 'Role', phone: 'Phone', workforceType: 'Worker type', engagementType: 'Agreement', engagementStart: 'Starts', engagementEnd: 'Ends', startDate: 'Starts', endDate: 'Ends', agreedRate: 'Agreed pay', rateBasis: 'Pay basis', relatedJobId: 'Linked job', agreementNotes: 'Agreement notes', agreementStatus: 'Agreement status', agreementReference: 'Agreement reference', skills: 'Skills', available: 'Available', registration: 'Registration', capacity: 'Capacity'};
 const canonical = (value: any): any => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 
@@ -25,7 +30,7 @@ function describeField(field: string, value: any, data: AppData) {
   if (field === 'crewIds' && Array.isArray(value)) return value.length ? value.map(id => name('workers', id)).join(', ') : 'No people assigned';
   if (field === 'relatedJobId') return value ? (data.jobs.find(job => job.id === value)?.title || 'No longer available') : 'No linked job';
   if (field === 'vehicleId') return value ? name('vehicles', value) : 'No vehicle assigned';
-  if (field === 'placeId') return value ? name('places', value) : 'No place assigned';
+  if (field === 'placeId') return value ? name('places', value) : 'No site assigned';
   if (field === 'tasks' && Array.isArray(value)) return value.map(task => typeof task === 'string' ? task : `${task.done ? '✓ ' : ''}${task.title || task.text || ''}`).join('\n') || 'No tasks';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (value === '' || value === null) return 'None';
@@ -71,7 +76,7 @@ export default function Assistant() {
     void api(`/assistant/briefing?today=${encodeURIComponent(today())}`, {signal: controller.signal}).then(result => {
       if (controller.signal.aborted) return;
       if (!result || !Array.isArray(result.items) || typeof result.summary !== 'string') throw new Error('The daily briefing could not be opened.');
-      setBriefing(result); setBriefingError('');
+      setBriefing({...result, items: result.items.filter((item: BriefingItem) => FINANCIAL_FEATURES_ENABLED || item.page !== 'business').map((item: BriefingItem) => ({...item, page: canonicalPage(item.page)}))}); setBriefingError('');
     }).catch(caught => {
       if (!controller.signal.aborted) {setBriefingError(errorMessage(caught)); if (caught instanceof ApiError && caught.status === 401) void refresh();}
     }).finally(() => {if (!controller.signal.aborted) setBriefingBusy(false);});
@@ -107,7 +112,7 @@ export default function Assistant() {
       if (!response.ok) {if (response.status === 401) void refresh(); throw new Error(typeof result?.error === 'string' ? result.error : 'Your assistant could not respond. Please try again.');}
       if (!result || typeof result.reply !== 'string' || !Array.isArray(result.actions)) throw new Error('Your assistant returned an incomplete response. Please try again.');
       const id = crypto.randomUUID();
-      const proposals = result.actions.filter((action: any) => action && collections.has(action.collection) && ['create', 'update'].includes(action.operation) && typeof action.label === 'string' && action.changes && typeof action.changes === 'object' && !Array.isArray(action.changes) && (action.operation !== 'update' || typeof action.recordId === 'string')).map((action: Action, index: number): Proposal => {
+      const proposals = result.actions.filter((action: any) => action && collections.has(action.collection) && ['create', 'update'].includes(action.operation) && typeof action.label === 'string' && action.changes && typeof action.changes === 'object' && !Array.isArray(action.changes) && (FINANCIAL_FEATURES_ENABLED || !containsFinancialFields(action.changes)) && (action.operation !== 'update' || typeof action.recordId === 'string')).map((action: Action, index: number): Proposal => {
         const record = (requestRecords[action.collection] || []).find((item: any) => item.id === action.recordId);
         return {...action, key: `${id}-${index}`, baseline: record};
       });
@@ -125,7 +130,7 @@ export default function Assistant() {
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !window.matchMedia('(pointer: coarse)').matches) {event.preventDefault(); void send();}
   }
   async function apply(proposal: Proposal) {
-    if (saving.current.has(proposal.key) || (saves[proposal.key] && saves[proposal.key].status !== 'check-failed') || !online) return;
+    if ((!FINANCIAL_FEATURES_ENABLED && containsFinancialFields(proposal.changes)) || saving.current.has(proposal.key) || (saves[proposal.key] && saves[proposal.key].status !== 'check-failed') || !online) return;
     saving.current.add(proposal.key);
     setSaves(previous => ({...previous, [proposal.key]: {status: 'saving'}}));
     if (proposal.operation === 'update') {
@@ -147,7 +152,7 @@ export default function Assistant() {
     if (!mounted.current) {saving.current.delete(proposal.key); return;}
     try {
       if (proposal.operation === 'create') await create(proposal.collection, proposal.changes);
-      else await update(proposal.collection, proposal.recordId!, proposal.changes);
+      else await update(proposal.collection, proposal.recordId!, proposal.changes, proposal.baseline);
       if (mounted.current) {setSaves(previous => ({...previous, [proposal.key]: {status: 'saved'}})); notify('Change saved.');}
     } catch (caught) {
       if (mounted.current) setSaves(previous => ({...previous, [proposal.key]: {status: 'uncertain', error: `${errorMessage(caught)} Check your records before asking for the change again.`}}));
@@ -163,7 +168,7 @@ export default function Assistant() {
       </aside>
       <div className="ca-chat">
         <div className={`ca-thread${!messages.length ? ' ca-thread-empty' : ''}`} role="log" aria-label="Assistant conversation" aria-live="polite" aria-busy={busy}>
-          {!messages.length ? <div className="ca-welcome"><span className="ca-welcome-icon"><Sparkles size={27} strokeWidth={1.3} /></span><h2>What can I help with?</h2><p>Ask about unfinished work, plan a visit, or assign people and a vehicle to a job.</p><div className="ca-prompts">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => choosePrompt(prompt)}>{prompt}<ArrowRight size={14} /></button>)}</div><p className="ca-example">Try “Assign a crew and a vehicle to tomorrow’s hotel visit.”</p></div> : <div className="ca-messages">{messages.map(entry => <article key={entry.id} className={`ca-message ca-message-${entry.role}`}><span className="ca-message-author">{entry.role === 'user' ? 'You' : <><Sparkles size={13} />Your assistant</>}</span><p>{entry.content}</p>{entry.proposals?.length ? <div className="ca-proposals"><span className="ca-review-label">Review before saving</span>{entry.proposals.map(proposal => {const save = saves[proposal.key]; return <article key={proposal.key} className={`ca-proposal${save?.status === 'saved' ? ' is-saved' : ''}`} aria-label={proposal.label}><div className="ca-proposal-heading"><span>{proposal.operation === 'create' ? 'Add' : 'Update'} · {proposal.collection === 'jobs' ? 'Job' : proposal.collection === 'workers' ? 'Person' : proposal.collection === 'vehicles' ? 'Vehicle' : 'Issue'}</span>{save?.status === 'saved' && <small><Check size={13} />Saved</small>}</div><h3>{proposal.label}</h3><dl>{Object.entries(proposal.changes).map(([field, value]) => <div key={field}><dt>{fields[field] || field.replace(/([A-Z])/g, ' $1')}</dt><dd>{describeField(field, value, data)}</dd></div>)}</dl>{proposal.warnings?.map((warning, index) => <p className="ca-action-warning" key={index}><CircleAlert size={14} />{warning}</p>)}{save?.error && <p className="ca-action-error" role="alert">{save.error}</p>}<div className="ca-proposal-actions"><button type="button" className="ca-apply-button" onClick={() => void apply(proposal)} disabled={Boolean(save && save.status !== 'check-failed') || !online}>{save?.status === 'saving' ? <><LoaderCircle size={15} className="ca-spin" />Saving…</> : save?.status === 'saved' ? <><Check size={15} />Saved</> : save?.status === 'check-failed' ? 'Try checking again' : save ? 'Review your records' : <>Save this change<Check size={15} /></>}</button>{save?.status === 'blocked' || save?.status === 'uncertain' ? <a href={`#${proposal.collection === 'jobs' ? 'schedule' : proposal.collection === 'issues' ? 'places' : 'team'}`}>Open records <ArrowRight size={13} /></a> : null}</div></article>;})}</div> : null}</article>)}{busy && <div className="ca-thinking" role="status"><LoaderCircle size={17} className="ca-spin" /><span>Checking your company records…</span></div>}<div ref={endRef} /></div>}
+          {!messages.length ? <div className="ca-welcome"><span className="ca-welcome-icon"><Sparkles size={27} strokeWidth={1.3} /></span><h2>What can I help with?</h2><p>Ask about unfinished work, plan a visit, or assign people and a vehicle to a job.</p><div className="ca-prompts">{prompts.map(prompt => <button type="button" key={prompt} onClick={() => choosePrompt(prompt)}>{prompt}<ArrowRight size={14} /></button>)}</div><p className="ca-example">Try “Assign a crew and a vehicle to tomorrow’s hotel visit.”</p></div> : <div className="ca-messages">{messages.map(entry => <article key={entry.id} className={`ca-message ca-message-${entry.role}`}><span className="ca-message-author">{entry.role === 'user' ? 'You' : <><Sparkles size={13} />Your assistant</>}</span><p>{entry.content}</p>{entry.proposals?.length ? <div className="ca-proposals"><span className="ca-review-label">Review before saving</span>{entry.proposals.map(proposal => {const save = saves[proposal.key]; return <article key={proposal.key} className={`ca-proposal${save?.status === 'saved' ? ' is-saved' : ''}`} aria-label={proposal.label}><div className="ca-proposal-heading"><span>{proposal.operation === 'create' ? 'Add' : 'Update'} · {proposal.collection === 'jobs' ? 'Job' : proposal.collection === 'workers' ? 'Person' : proposal.collection === 'vehicles' ? 'Vehicle' : 'Issue'}</span>{save?.status === 'saved' && <small><Check size={13} />Saved</small>}</div><h3>{proposal.label}</h3><dl>{Object.entries(proposal.changes).map(([field, value]) => <div key={field}><dt>{fields[field] || field.replace(/([A-Z])/g, ' $1')}</dt><dd>{describeField(field, value, data)}</dd></div>)}</dl>{proposal.warnings?.map((warning, index) => <p className="ca-action-warning" key={index}><CircleAlert size={14} />{warning}</p>)}{save?.error && <p className="ca-action-error" role="alert">{save.error}</p>}<div className="ca-proposal-actions"><button type="button" className="ca-apply-button" onClick={() => void apply(proposal)} disabled={Boolean(save && save.status !== 'check-failed') || !online}>{save?.status === 'saving' ? <><LoaderCircle size={15} className="ca-spin" />Saving…</> : save?.status === 'saved' ? <><Check size={15} />Saved</> : save?.status === 'check-failed' ? 'Try checking again' : save ? 'Review your records' : <>Save this change<Check size={15} /></>}</button>{save?.status === 'blocked' || save?.status === 'uncertain' ? <a href={`#${proposal.collection === 'jobs' ? 'schedule' : proposal.collection === 'issues' ? 'sites' : 'team'}`}>Open records <ArrowRight size={13} /></a> : null}</div></article>;})}</div> : null}</article>)}{busy && <div className="ca-thinking" role="status"><LoaderCircle size={17} className="ca-spin" /><span>Checking your company records…</span></div>}<div ref={endRef} /></div>}
         </div>
         <div className="ca-compose-area">
           {!configured && <p className="ca-connection-note">{manager ? <>Ask the owner to connect your assistant. Your attention list is still available.</> : <>Connect your assistant in <a href="#settings">Settings</a> to get help with your company. Your attention list is still available.</>}</p>}

@@ -57,6 +57,7 @@ try {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path === '/api/state') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(state)});
+    if (path === '/api/activity') return route.fulfill({json: {items: [], unreadCount: 0}});
     if (path === '/api/designs/generate' && request.method() === 'POST') {
       const body = request.postDataJSON();
       generationRequests.push(body);
@@ -82,7 +83,9 @@ try {
     if (path.startsWith('/api/designs/') && request.method() === 'PATCH') {
       const design = state.designs.find(item => item.id === decodeURIComponent(path.split('/').at(-1)));
       assert.ok(design, 'Only known test designs may be edited.');
-      Object.assign(design, request.postDataJSON());
+      const {_expected, ...changes} = request.postDataJSON();
+      if (_expected) assert.deepEqual(_expected, design, 'Design edits should include the current saved version.');
+      Object.assign(design, changes);
       return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(design)});
     }
     throw new Error(`Unexpected studio API request: ${request.method()} ${path}`);
@@ -106,7 +109,7 @@ try {
   await page.screenshot({path: join(artifacts, 'studio-chat-empty.png'), fullPage: true});
   console.log('PASS simple chat welcome has no measurements form and requires a message before sending');
 
-  await studio.getByRole('combobox', {name: 'Design place', exact: true}).selectOption('place-hotel');
+  await studio.getByRole('combobox', {name: 'Design site', exact: true}).selectOption('place-hotel');
   await upload.setInputFiles([photo, secondPhoto]);
   await expect(studio.locator('.dc-attachment')).toHaveCount(2);
   await upload.setInputFiles([photo, photo, photo]);
@@ -172,6 +175,10 @@ try {
   console.log('PASS unsent text and photos stay with their space while gallery navigation keeps separate drafts apart');
 
   const paidRequestsBeforeRefinement = generationRequests.length;
+  await expect(studio.getByRole('button', {name: 'Lower cost', exact: true})).toHaveCount(0);
+  await studio.getByRole('button', {name: 'Simpler design', exact: true}).click();
+  await expect(composer).toHaveValue(/fewer plant varieties, simple pots/);
+  assert.equal(generationRequests.length, paidRequestsBeforeRefinement, 'Refinement buttons prepare a draft without making a request.');
   await studio.getByRole('button', {name: 'Less maintenance', exact: true}).click();
   await expect(composer).toHaveValue(/easier to maintain/);
   await studio.getByRole('button', {name: 'Use our plants', exact: true}).click();
@@ -192,7 +199,7 @@ try {
   await studio.getByRole('button', {name: 'Design details', exact: true}).click();
   const details = page.getByRole('dialog', {name: 'Design details', exact: true});
   await details.getByRole('textbox', {name: 'Design name', exact: true}).fill('Palm Court entrance');
-  await details.getByRole('combobox', {name: 'Design place', exact: true}).selectOption('place-court');
+  await details.getByRole('combobox', {name: 'Design site', exact: true}).selectOption('place-court');
   await details.getByRole('checkbox', {name: 'Add to favourites', exact: true}).check();
   await details.getByRole('button', {name: 'Save details', exact: true}).click();
   await expect(details).toHaveCount(0);

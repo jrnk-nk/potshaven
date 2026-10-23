@@ -35,8 +35,8 @@ try {
   await page.getByLabel('Worker group',{exact:true}).selectOption('External');
   await page.getByLabel('Work agreement',{exact:true}).selectOption('Until job complete');
   await page.getByLabel('Work until this job is complete',{exact:true}).selectOption('project');
-  await page.getByText('Pay & agreement details',{exact:true}).click();
-  await page.getByLabel('Agreed rate (GHS)',{exact:true}).fill('900');
+  await page.getByText('Agreement details',{exact:true}).click();
+  await expect(page.getByLabel(/^Agreed rate/)).toHaveCount(0);
   await page.getByLabel('Agreement status',{exact:true}).selectOption('Signed');
   await page.getByLabel('Signed agreement reference',{exact:true}).fill('Signed hotel scope');
   await page.getByLabel('Agreed work & crew instructions',{exact:true}).fill('Install the courtyard pots only.');
@@ -46,18 +46,18 @@ try {
   assert.equal(worker.workforceType,'External');
   assert.equal(worker.engagementType,'Until job complete');
   assert.equal(worker.relatedJobId,'project');
-  assert.equal(worker.agreedRate,900);
+  assert.equal(worker.agreedRate,undefined);
   assert.equal(worker.agreementStatus,'Signed');
   assert.equal(worker.engagementEnd,'');
   await page.getByLabel('Filter workers',{exact:true}).selectOption('External workers');
   await expect(page.getByRole('heading',{name:'Ama Contract',exact:true})).toBeVisible();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 2),false);
-  console.log('PASS external completion-based work agreement, pay/reference persistence, and mobile team layout');
+  console.log('PASS external completion-based work agreement, nonfinancial agreement/reference persistence, and mobile team layout');
 
   await page.goto(`${baseURL}/#schedule`);
   await page.getByRole('button',{name:'Schedule a visit',exact:true}).click();
   await page.getByLabel('Job title',{exact:true}).fill('Courtyard care');
-  await page.getByLabel('Place',{exact:true}).selectOption('place');
+  await page.getByLabel('Site',{exact:true}).selectOption('place');
   await page.getByLabel('Ama Contract',{exact:true}).check();
   await page.getByLabel('Vehicle',{exact:true}).selectOption('van');
   await expect(page.getByText('Crew van is marked servicing.',{exact:true})).toBeVisible();

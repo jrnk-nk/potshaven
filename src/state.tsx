@@ -9,7 +9,7 @@ export type AppData = { [key: string]: any; places: RecordData[]; jobs: RecordDa
 const collections = ['places','jobs','inventory','stockMovements','workers','vehicles','contracts','payments','expenses','purchaseRequests','equipment','issues','careGuides','designs'];
 const empty: AppData = {places:[],jobs:[],inventory:[],workers:[],vehicles:[],contracts:[],payments:[],expenses:[],purchaseRequests:[],equipment:[],issues:[],careGuides:[],designs:[],stockMovements:[],settings:{}};
 type Connection = 'connecting' | 'online' | 'offline' | 'setup';
-type Context = { data: AppData; loading: boolean; refreshing: boolean; error: string; errorCode: string; connection: Connection; hasData: boolean; authenticated: boolean; refresh: () => Promise<void>; signIn: (role: string, password: string) => Promise<void>; signOut: () => Promise<void>; create: (collection: string, payload: any) => Promise<any>; update: (collection: string, id: string, payload: any) => Promise<any>; remove: (collection: string, id: string) => Promise<void>; notify: (message: string) => void; openJob: (id?: string) => void; toast: string };
+type Context = { data: AppData; loading: boolean; refreshing: boolean; error: string; errorCode: string; connection: Connection; hasData: boolean; authenticated: boolean; refresh: () => Promise<void>; signIn: (role: string, password: string) => Promise<void>; signOut: () => Promise<void>; create: (collection: string, payload: any) => Promise<any>; update: (collection: string, id: string, payload: any, expectedRecord?: Record<string,any>) => Promise<any>; remove: (collection: string, id: string) => Promise<void>; notify: (message: string) => void; openJob: (id?: string) => void; toast: string };
 const AppContext = createContext<Context>(null!);
 function workspace(value: any): AppData {
   if (!value || typeof value !== 'object' || collections.some(key => !Array.isArray(value[key])) || !value.settings || typeof value.settings !== 'object' || Array.isArray(value.settings)) {
@@ -107,9 +107,16 @@ export function AppProvider({children}: {children: React.ReactNode}) {
   };
   const ensureSession=(version:number)=>{if(version!==sessionVersion.current)throw new ApiError('Your account changed before this request finished.',{code:'SESSION_CHANGED'});};
   const create=async(collection:string,payload:any)=>{const version=sessionVersion.current;const result=await mutate(`/${collection}`,{method:'POST',body:JSON.stringify(payload)});ensureSession(version);reconcile(collection,result);return result;};
-  const update=async(collection:string,id:string,payload:any)=>{
+  const update=async(collection:string,id:string,payload:any,expectedRecord?:Record<string,any>)=>{
     const version=sessionVersion.current;
-    const result=await mutate(`/${collection}${id?`/${encodeURIComponent(id)}`:''}`,{method:'PATCH',body:JSON.stringify(payload)});ensureSession(version);reconcile(collection,result);
+    // Forms supply the snapshot they opened with. Quick actions use the last
+    // loaded record. Visit appends merge atomically on the server instead.
+    const baseline=expectedRecord||(Array.isArray(data[collection])?data[collection].find((record:RecordData)=>record.id===id):undefined);
+    const conditional=id&&baseline&&!(collection==='places'&&Object.hasOwn(payload,'inspection'));
+    let result;
+    try {result=await mutate(`/${collection}${id?`/${encodeURIComponent(id)}`:''}`,{method:'PATCH',body:JSON.stringify(conditional?{...payload,_expected:baseline}:payload)});}
+    catch(caught){if(version===sessionVersion.current&&caught instanceof ApiError&&caught.status===409)await refresh();throw caught;}
+    ensureSession(version);reconcile(collection,result);
     // These operations also create a follow-up job or stock-ledger entry.
     if((collection==='jobs'&&payload.status==='Completed')||(collection==='inventory'&&payload.quantity!==undefined)){await refresh();}
     return result;

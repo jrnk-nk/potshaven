@@ -48,7 +48,7 @@ export function managerDay(data: Workspace, date: string) {
   if (lowStock.length) reminders.push({id: 'stock', title: `${lowStock.length} ${lowStock.length === 1 ? 'item is' : 'items are'} running low`, detail: lowStock.slice(0, 2).map(item => item.name).join(', '), page: 'inventory', icon: 'Sprout'});
   if (endingAgreements.length) reminders.push({id: 'agreements', title: `${endingAgreements.length} work ${endingAgreements.length === 1 ? 'agreement needs' : 'agreements need'} review`, detail: endingAgreements.slice(0, 2).map(worker => `${worker.name} · ${worker.engagementEnd < date ? 'ended' : 'ends'} ${worker.engagementEnd}`).join(', '), page: 'team', icon: 'UsersRound'});
   if (equipmentDue.length) reminders.push({id: 'equipment', title: `${equipmentDue.length} equipment service ${equipmentDue.length === 1 ? 'check' : 'checks'}`, detail: equipmentDue.slice(0, 2).map(item => item.name).join(', '), page: 'inventory', icon: 'Wrench'});
-  if (issuesDue.length) reminders.push({id: 'issues', title: `${issuesDue.length} site ${issuesDue.length === 1 ? 'issue needs' : 'issues need'} follow-up`, detail: issuesDue.slice(0, 2).map(item => item.title).join(', '), page: 'places', icon: 'MapPin'});
+  if (issuesDue.length) reminders.push({id: 'issues', title: `${issuesDue.length} site ${issuesDue.length === 1 ? 'issue needs' : 'issues need'} follow-up`, detail: issuesDue.slice(0, 2).map(item => item.title).join(', '), page: 'sites', icon: 'MapPin'});
   return {scheduled, completed: scheduled.filter(job => job.status === 'Completed').length, overdue, completedUnchecked, dueToday, attentionJobs, assignmentChecks, lowStock, endingAgreements, equipmentDue, issuesDue, reminders};
 }
 
@@ -65,7 +65,7 @@ export function dailyWorkBrief(data: Workspace, date: string) {
     const place = places.find(item => item.id === job.placeId);
     const crew = (Array.isArray(job.crewIds) ? job.crewIds : []).map((id: string) => workers.find(worker => worker.id === id)?.name || 'Worker to confirm');
     const vehicle = vehicles.find(item => item.id === job.vehicleId);
-    lines.push(`${index + 1}. ${job.time || 'Time to confirm'} · ${job.title}`, `Status: ${job.status || 'To confirm'}`, `Place: ${place?.name || 'To confirm'}${place?.address ? ` · ${place.address}` : ''}`, `People: ${crew.join(', ') || 'To be assigned'}`, `Vehicle: ${vehicle ? `${vehicle.name}${vehicle.registration ? ` · ${vehicle.registration}` : ''}` : 'Confirm transport if needed'}`);
+    lines.push(`${index + 1}. ${job.time || 'Time to confirm'} · ${job.title}`, `Status: ${job.status || 'To confirm'}`, `Site: ${place?.name || 'To confirm'}${place?.address ? ` · ${place.address}` : ''}`, `People: ${crew.join(', ') || 'To be assigned'}`, `Vehicle: ${vehicle ? `${vehicle.name}${vehicle.registration ? ` · ${vehicle.registration}` : ''}` : 'Confirm transport if needed'}`);
     for (const task of Array.isArray(job.tasks) ? job.tasks : []) lines.push(`${typeof task === 'object' && task?.done === true ? 'Done' : typeof task === 'object' && task?.done === false ? 'Pending' : 'Unconfirmed'}: ${taskLabel(task)}`);
     if (job.notes) lines.push(`Instructions: ${job.notes}`);
     const check = day.assignmentChecks.find(item => item.job.id === job.id);

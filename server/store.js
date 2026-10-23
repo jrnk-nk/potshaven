@@ -11,6 +11,26 @@ export class AppError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
 }
 
+// Activity is an owner-only operational ledger, separate from company records.
+// Never persist a raw request, notes, financial fields, or a claimed staff name.
+export function activityData(input) {
+  if (input == null) return null;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new AppError('Invalid activity record.');
+  if (input.actor !== 'Manager account' || !['created', 'updated', 'completed', 'visit_recorded', 'stock_used', 'assigned'].includes(input.action) || !['places', 'jobs', 'inventory', 'workers', 'vehicles', 'purchaseRequests', 'issues'].includes(input.collection)) throw new AppError('Invalid activity record.');
+  const result = {actor: 'Manager account', action: input.action, collection: input.collection, readAt: null};
+  for (const key of ['id', 'recordId', 'title', 'siteId', 'siteName', 'summary', 'createdAt', 'jobId', 'unit']) {
+    if (input[key] === undefined && ['jobId', 'unit'].includes(key)) continue;
+    if (typeof input[key] !== 'string' || input[key].length > 200 || ['id', 'recordId', 'createdAt'].includes(key) && !input[key]) throw new AppError('Invalid activity record.');
+    result[key] = input[key];
+  }
+  if (!Number.isFinite(Date.parse(result.createdAt))) throw new AppError('Invalid activity date.');
+  if (input.quantity !== undefined) {
+    if (!Number.isFinite(input.quantity) || input.quantity <= 0) throw new AppError('Invalid activity quantity.');
+    result.quantity = input.quantity;
+  }
+  return result;
+}
+
 export function nextOccurrence(scheduledDate, recurrence, now = new Date()) {
   const original = new Date(`${scheduledDate}T12:00:00Z`);
   if (Number.isNaN(original.getTime()) || original.toISOString().slice(0, 10) !== scheduledDate) throw new AppError('A valid scheduled date is required for recurring maintenance.');
@@ -68,12 +88,15 @@ export function validate(collection, record) {
 export function createStore(filename = '.data/potshaven.db', { seed = true, now = new Date() } = {}) {
   if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
   const db = new DatabaseSync(filename);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; CREATE TABLE IF NOT EXISTS records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(collection, id)); CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; CREATE TABLE IF NOT EXISTS records (collection TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(collection, id)); CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS activity (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, data TEXT NOT NULL);');
+  db.exec("CREATE INDEX IF NOT EXISTS activity_unread ON activity(sequence) WHERE json_extract(data, '$.readAt') IS NULL");
   const find = db.prepare('SELECT data FROM records WHERE collection = ? AND id = ?');
   const list = db.prepare('SELECT data FROM records WHERE collection = ? ORDER BY rowid');
   const upsert = db.prepare('INSERT INTO records (collection, id, data) VALUES (?, ?, ?) ON CONFLICT(collection,id) DO UPDATE SET data=excluded.data');
   const getMeta = db.prepare('SELECT value FROM metadata WHERE key = ?');
   const setMeta = db.prepare('INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
+  const insertActivity = db.prepare('INSERT INTO activity(id,data) VALUES (?,?)');
+  const appendActivity = value => { if (value) insertActivity.run(value.id, JSON.stringify(value)); };
   function transaction(fn) {
     db.exec('BEGIN IMMEDIATE');
     try { const result = fn(); db.exec('COMMIT'); return result; } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -83,13 +106,15 @@ export function createStore(filename = '.data/potshaven.db', { seed = true, now 
     close: () => db.close(),
     list(collection) { return list.all(collection).map(row => JSON.parse(row.data)); },
     get(collection, id) { const row = find.get(collection, id); return row ? JSON.parse(row.data) : undefined; },
-    put(collection, input) {
+    put(collection, input, {activity} = {}) {
       validate(collection, input);
       const record = { ...input, id: input.id || randomUUID() };
-      upsert.run(collection, record.id, JSON.stringify(record));
-      return record;
+      const event = activityData(activity);
+      const save = () => { upsert.run(collection, record.id, JSON.stringify(record)); appendActivity(event); return record; };
+      return event ? transaction(save) : save();
     },
-    update(collection, id, input, actor = 'Owner', {expected} = {}) {
+    update(collection, id, input, actor = 'Owner', {expected, activity} = {}) {
+      const event = activityData(activity);
       return transaction(() => {
         const previous = store.get(collection, id);
         if (!previous) throw new AppError('Record not found.', 404);
@@ -117,6 +142,7 @@ export function createStore(filename = '.data/potshaven.db', { seed = true, now 
           }
           next = store.put('jobs', { ...next, nextJobId, completedAt: new Date().toISOString() });
         }
+        appendActivity(event);
         return next;
       });
     },
@@ -157,19 +183,33 @@ export function createStore(filename = '.data/potshaven.db', { seed = true, now 
       setMeta.run('settings', JSON.stringify(settings));
       return settings;
     },
-    stock(id, quantity, { type = 'use', jobId = '', note = '', actor = 'Owner' } = {}) {
+    stock(id, quantity, { type = 'use', jobId = '', note = '', actor = 'Owner', activity } = {}) {
       if (!Number.isFinite(quantity) || quantity <= 0) throw new AppError('Quantity must be greater than zero.');
       if (!['use', 'restock'].includes(type)) throw new AppError('Unknown stock operation.');
       if (jobId && !store.get('jobs', jobId)) throw new AppError('Choose an existing job.');
       text(note, 'Note');
+      const event = activityData(activity);
       return transaction(() => {
         const item = store.get('inventory', id);
         if (!item) throw new AppError('Inventory item not found.', 404);
         if (type === 'use' && quantity > item.quantity) throw new AppError(`Only ${item.quantity} ${item.unit || 'units'} available.`, 409);
         const next = store.put('inventory', { ...item, quantity: Number((item.quantity + (type === 'use' ? -quantity : quantity)).toFixed(4)) });
         const movement = store.put('stockMovements', { id: randomUUID(), inventoryId: id, itemName: item.name, type, quantity, jobId, note, actor, date: new Date().toISOString(), balance: next.quantity, unitCost: item.cost || 0, totalCost: type === 'use' ? quantity * (item.cost || 0) : 0 });
+        appendActivity(event);
         return { item: next, movement };
       });
+    },
+    activityFeed(limit = 50) {
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new AppError('Choose an activity limit from 1 to 100.');
+      return {items: db.prepare('SELECT data FROM activity ORDER BY sequence DESC LIMIT ?').all(limit).map(row => JSON.parse(row.data)), unreadCount: db.prepare("SELECT count(*) AS count FROM activity WHERE json_extract(data, '$.readAt') IS NULL").get().count};
+    },
+    readActivity(id) {
+      const row = db.prepare("UPDATE activity SET data = json_set(data, '$.readAt', coalesce(json_extract(data, '$.readAt'), ?)) WHERE id = ? RETURNING data").get(new Date().toISOString(), id);
+      if (!row) throw new AppError('Activity not found.', 404);
+      return JSON.parse(row.data);
+    },
+    readAllActivity() {
+      db.prepare("UPDATE activity SET data = json_set(data, '$.readAt', ?) WHERE json_extract(data, '$.readAt') IS NULL").run(new Date().toISOString());
     },
     state() { return Object.fromEntries([...collections.map(collection => [collection, store.list(collection)]), ['settings', store.settings()]]); },
   };

@@ -111,9 +111,9 @@ try {
   for (const label of ['Design studio', 'Business', 'Portfolio & reports']) await expect(menu.getByRole('button', {name: label, exact: true})).toHaveCount(0);
   await expect(menu).not.toContainText('Private Business Owner');
   await manager.keyboard.press('Escape');
-  for (const route of ['studio', 'portfolio', 'business']) {
+  for (const route of ['studio', 'portfolio', 'business', 'activity']) {
     await manager.goto(`${baseURL}/#${route}`);
-    await expect(manager.getByRole('heading', {name: 'This area belongs to the owner', exact: true})).toBeVisible();
+    await expect(manager.getByRole('heading', {name: route === 'business' ? 'This page isn’t available right now' : 'This area belongs to the owner', exact: true})).toBeVisible();
     await expect(manager.locator('.design-chat,.studio-space-gallery,.business-page')).toHaveCount(0);
   }
   await manager.goto(`${baseURL}/#settings`);
@@ -150,7 +150,7 @@ try {
   await manager.getByRole('button', {name: /New request/}).click();
   await manager.getByLabel('Item or materials needed', {exact: true}).fill('Crew safety gloves');
   await manager.getByLabel('Quantity', {exact: true}).fill('4');
-  await manager.getByLabel('Estimated total (GHS)', {exact: true}).fill('120');
+  await expect(manager.getByLabel(/Estimated total/)).toHaveCount(0);
   await manager.getByRole('button', {name: 'Save changes', exact: true}).click();
   await expect(manager.getByRole('dialog')).toHaveCount(0);
   const request = store.list('purchaseRequests').find(item => item.title === 'Crew safety gloves');
@@ -182,13 +182,17 @@ try {
   await signIn(owner, 'owner', 'owner-access-test');
   const ownerState = await stateFor(ownerContext);
   assert.equal(ownerState.designs.length, 1);
-  assert.equal(ownerState.payments.length, 1);
-  assert.equal(ownerState.expenses.length, 1);
+  assert.equal(ownerState.payments.length, 0);
+  assert.equal(ownerState.expenses.length, 0);
   assert.equal(ownerState.contracts.length, 1);
-  assert.equal(ownerState.workers[0].agreedRate, 12345);
-  assert.equal(ownerState.inventory[0].cost, 45.5);
-  assert.equal(ownerState.jobs[0].budget, 98765);
+  assert.equal(ownerState.workers[0].agreedRate, undefined);
+  assert.equal(ownerState.inventory[0].cost, undefined);
+  assert.equal(ownerState.jobs[0].budget, undefined);
   assert.equal((await ownerContext.request.get(`${baseURL}/api/designs`)).status(), 200);
+  for (const collection of ['payments', 'expenses']) assert.equal((await ownerContext.request.get(`${baseURL}/api/${collection}`)).status(), 403);
+  assert.equal(store.get('payments', 'payment').amount, 7777);
+  assert.equal(store.get('expenses', 'expense').amount, 3333);
+  assert.equal(store.get('jobs', 'visit').budget, 98765);
   assert.equal((await ownerContext.request.get(`${baseURL}${privateImage}`)).status(), 200);
   const hire = await ownerContext.request.post(`${baseURL}/api/workers`, {data: {name: 'Approved hire', role: 'Gardener', available: true, skills: []}});
   assert.equal(hire.status(), 201);
@@ -203,7 +207,7 @@ try {
   assert.deepEqual(errors, []);
   mkdirSync('/tmp/potshaven-checks', {recursive: true});
   await manager.screenshot({path: '/tmp/potshaven-checks/manager-access-mobile.png', fullPage: true});
-  console.log('PASS owner retains private data, studio, company settings, hiring and stock control');
+  console.log('PASS owner keeps studio, settings, hiring and stock control; financial data stays hidden and preserved');
 } catch (error) {
   mkdirSync('/tmp/potshaven-checks', {recursive: true});
   await manager.screenshot({path: '/tmp/potshaven-checks/manager-access-failure.png', fullPage: true}).catch(() => {});

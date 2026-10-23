@@ -1,6 +1,8 @@
 # PotsHavenGh
 
-A simple landscaping and decorating workspace for the owner and manager. Workers receive instructions through WhatsApp. The owner’s menu emphasizes **Home, Projects, Business, Team & vehicles, and Design studio**. The manager’s menu is **Today, Schedule, Places, Inventory, and Team & vehicles**, with operational projects and the assistant under More. Studio, gallery, portfolio, finances, hiring, pay, approvals, and company settings are owner-only. On mobile, the studio and assistant use a compact header, larger controls, and a fixed message box.
+A simple landscaping and decorating workspace for the owner and manager. **Sites** brings each location, its project work, visits, maintenance and follow-ups together. Workers receive instructions through WhatsApp. The owner’s main menu is **Home, Sites, Schedule, Team & vehicles, Design studio**, with Inventory, Company assistant, Portfolio & reports and Manager activity under More. The manager’s menu is **Today, Schedule, Sites, Inventory, Team & vehicles**, with Company assistant under More. Studio, portfolio, hiring, supply approvals, the activity inbox and company settings are owner-only.
+
+Money features are temporarily disabled for **both roles**. Financial pages, amounts, budgets, pay, costs and receipt requests are unavailable in the interface, API and assistant. Existing financial data remains stored; operational edits preserve hidden values. This does not delete or reset the company’s records.
 
 ![PotsHavenGh workspace](docs/overview.png)
 
@@ -44,24 +46,26 @@ npm run test:assistant   # Grounded attention, reviewed changes, failures and mo
 npm run test:workforce   # External worker agreements, assignments, WhatsApp and persistence
 npm run test:manager     # Daily brief, operational reminders, assignments and mobile layout
 npm run test:manager-access # Authenticated UI/API role boundaries and operational work
-npm run test:roles-home  # Distinct homes, owner totals, account screens and studio guards
+npm run test:roles-home  # Operational homes, unified Sites, legacy links and role guards
+npm run test:activity    # Owner inbox, unread status, linked sites and manager access limits
 ```
 
 Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwright install chromium` or set `CHROMIUM_PATH`. Tests use temporary databases and servers, leaving company records alone. PostgreSQL tests run SQL against PGlite; they do not require or provision a live Supabase account.
 
 ## Included workflows
 
-- Places, clients, measurements, site photos, inspections, and maintenance history.
+- One Sites workspace for clients, location details, site photos, project work, visit observations, maintenance history, follow-ups and branded visit reports. Old `#places` and `#projects` bookmarks open `#sites`; `#sites?site=ID` opens a specific site. Site visits record plant health, irrigation, work needed, notes and up to four photos without replacing earlier visits.
 - Daily jobs, assigned crews and vehicles, ordered routes, checklists, completion photos, and recurring maintenance. Home highlights checklist progress, overdue work, assignment checks, and operational reminders. A daily brief can be reviewed, copied, and opened in WhatsApp for the manager to send. WhatsApp sharing prepares a message for the manager to send; replies do not sync automatically.
-- Plant photos, stock counts, usage/restocking history, low-stock alerts and atomic deductions linked to job costs.
-- Projects, deadlines, task progress, budgets, direct costs, and stock consumption costs.
-- Purchase approvals, equipment servicing, plant care guides, crew skills/workload and transport/fuel costs.
-- Company staff and external workers with daily, weekly, fixed-term, or job-completion agreements. Save agreement dates, rates, signed references, and work instructions; job assignments flag availability and other visits on the same day. Rates are agreement records, not recorded payments.
+- Plant photos, stock counts, usage/restocking history, low-stock alerts and atomic deductions linked to jobs.
+- Project deadlines and checklist progress within each site, alongside recurring maintenance visits and assigned people/vehicles.
+- Supply requests and owner approvals, equipment servicing, plant care guides, crew skills/workload and transport availability.
+- Company staff and external workers with daily, weekly, fixed-term, or job-completion agreements. Save agreement dates, signed references and work instructions; job assignments flag availability and other visits on the same day. Pay fields remain unavailable while money features are disabled.
 - A Company assistant that answers from saved business records and prepares job, worker, vehicle, and issue changes for review. Save each change explicitly. Its attention list checks overdue jobs, unchecked completion tasks, missing assignments, low stock, and expiring agreements without a model call.
-- Maintenance contracts, payments, expenses, client issues, branded service reports and a portfolio.
-- A gallery that opens first in the studio: one chosen or latest image per space, with search and favourites. Open a space to attach photos and refine the idea in its own chat. The latest idea stays visible; earlier work is tucked behind one control. Earlier versions stay available for editing, portfolio sharing and branded downloads. Rename, link places, favourite, and choose the gallery image; compare the original photo with a design. Client presentation mode shows only the friendly space title, image, and company branding. Gallery/portfolio captions and downloaded filenames omit raw instructions and provider/model details. Quick edits fill a draft for review, including a prompt based on plants actually in stock. Unsent text survives a reload in the current signed-in browser tab (sign-out or an account change clears it); in-tab space switching keeps each space’s draft and photos separate. Photo attachments must be re-added after a reload. Include measurements directly in the message when useful; concepts are not construction drawings.
+- An owner-only Manager activity inbox for saved requests, site visits, job progress/completion, assignments, stock use and other permitted manager changes. Events and their related changes commit together. The inbox shows the latest 100 updates, keeps a durable unread count, and checks every 30 seconds while visible, as well as on focus/reconnection. The shared sign-in is labelled **Manager account**; it does not identify an individual worker.
+- Client issues, branded service reports and an owner portfolio.
+- A gallery that opens first in the studio: one chosen or latest image per space, with search and favourites. Open a space to attach photos and refine the idea in its own chat. The latest idea stays visible; earlier work is tucked behind one control. Earlier versions stay available for editing, portfolio sharing and branded downloads. Rename, link sites, favourite, and choose the gallery image; compare the original photo with a design. Client presentation mode shows only the friendly space title, image, and company branding. Gallery/portfolio captions and downloaded filenames omit raw instructions and provider/model details. Quick edits fill a draft for review, including a prompt based on plants actually in stock. Unsent text survives a reload in the current signed-in browser tab (sign-out or an account change clears it); in-tab space switching keeps each space’s draft and photos separate. Photo attachments must be re-added after a reload. Include measurements directly in the message when useful; concepts are not construction drawings.
 
-AI replies and concepts need the configured provider key, model access, and billing. Automated tests mock provider requests and do not verify a paid generation against the live account. Reminders are in-app. Email, automatic WhatsApp sending and route optimisation are not configured.
+AI replies and concepts need the configured provider key, model access, and billing. Automated tests mock provider requests and do not verify a paid generation against the live account. Reminders and manager activity are in-app. Email, automatic WhatsApp sending and route optimisation are not configured. Activity records start with new manager changes after this feature is installed; existing work is not presented as historical notifications.
 
 ## Loading and recovery
 
@@ -69,9 +73,9 @@ Pages load on demand. Ordinary changes update the affected record without fetchi
 
 Database health checks perform actual reads on every request. Interrupted PostgreSQL reads retry once on a fresh connection; failed startup releases its connection pool before another attempt. Interrupted response bodies and temporary gateway failures also trigger browser recovery. After an accepted sign-in, a failed workspace load shows the connection error and a retry button; retrying does not require submitting the password again. Expired sessions clear private records and return to sign-in.
 
-Manager edits compare the authorized record with its current database value while holding the write lock. If an owner reviews a purchase or changes a job during the request, the stale manager save is rejected instead of overwriting that decision.
+Manager edits compare the authorized record with its current database value while holding the write lock. Collection forms can also submit an optional baseline from when they opened. If a newer change conflicts, the save is rejected with the draft retained for review rather than overwriting that change.
 
-Local production: `npm run build && npm start` serves the UI and API together on `PORT` (default3001). Keep backups of the SQLite database, `uploads` and `designs` directories together, using SQLite’s backup API while live. Supabase hosts these records and media in the same managed database. Currency settings change labels, not existing monetary values.
+Local production: `npm run build && npm start` serves the UI and API together on `PORT` (default3001). Keep backups of the SQLite database, `uploads` and `designs` directories together, using SQLite’s backup API while live. Supabase hosts company records, private activity and media in the same managed database.
 
 A [Dockerfile](Dockerfile) and [Render blueprint](render.yaml) remain available for an alternative SQLite service with a persistent disk; the Render plan is paid and has not been provisioned. No live hosting account is created by these files.
 

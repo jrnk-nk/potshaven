@@ -53,13 +53,20 @@ export function managerDay(data: Workspace, date: string) {
 }
 
 /** The manager reviews and shares this text. Building it never sends a message. */
-export function dailyWorkBrief(data: Workspace, date: string) {
-  const day = managerDay(data, date);
+export function dailyWorkBrief(data: Workspace, date: string, {siteId}: {siteId?: string} = {}) {
+  // Keep all assignments available to detect crew/vehicle reuse at other
+  // sites, even when the printed plan includes only the selected location.
+  const companyDay = managerDay(data, date);
+  const scopedJobs = (jobs: Row[]) => siteId ? jobs.filter(job => job.placeId === siteId) : jobs;
+  const scheduled = scopedJobs(companyDay.scheduled);
+  const day = {...companyDay, scheduled, completed: scheduled.filter(job => job.status === 'Completed').length,
+    overdue: scopedJobs(companyDay.overdue), completedUnchecked: scopedJobs(companyDay.completedUnchecked)};
   const workers = rows(data, 'workers');
   const places = rows(data, 'places');
   const vehicles = rows(data, 'vehicles');
   const label = new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', {weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Africa/Accra'});
   const lines = [`${data.settings?.companyName || 'PotsHaven'} · Daily work plan`, label, '', `${day.scheduled.length} ${day.scheduled.length === 1 ? 'job' : 'jobs'} scheduled · ${day.completed} marked complete`, ''];
+  if (siteId) lines.splice(2, 0, `Site focus: ${places.find(site => site.id === siteId)?.name || 'Selected site'}`);
   if (!day.scheduled.length) lines.push('No jobs are scheduled for today.', '');
   day.scheduled.forEach((job, index) => {
     const place = places.find(item => item.id === job.placeId);

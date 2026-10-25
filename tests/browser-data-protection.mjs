@@ -15,14 +15,20 @@ const page = await browser.newPage({viewport: {width: 390, height: 844}});
 page.setDefaultTimeout(15000);
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 const collections = ['places','jobs','inventory','stockMovements','workers','vehicles','contracts','payments','expenses','purchaseRequests','equipment','issues','careGuides','designs'];
-const state = {...Object.fromEntries(collections.map(name => [name, []])), settings: {companyName: 'PotsHavenGh'}, role: 'owner', demoMode: false, imageGenerationConfigured: false, assistantConfigured: false};
+const state = {...Object.fromEntries(collections.map(name => [name, []])), settings: {companyName: 'PotsHavenGh'}, role: 'owner', demoMode: false, imageGenerationConfigured: false, assistantConfigured: true};
 const healthy = {checkedAt: '2026-10-23T17:24:00.000Z', storage: 'postgres', database: 'connected', durableMedia: true, rls: {enabled: true, protectedTables: 4, totalTables: 4, browserAccessBlocked: true}, backups: 'unverified'};
 let report = healthy, responseStatus = 200, calls = 0, hold, held;
+let providerCalls = 0, providerFails = false;
 try {
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if(path === '/api/state')return route.fulfill({json: state});
     if(path === '/api/activity')return route.fulfill({json: {items: [], unreadCount: 0}});
+    if(path === '/api/readiness/assistant') {
+      providerCalls++;
+      assert.equal(route.request().method(), 'POST');
+      return route.fulfill({status: providerFails ? 502 : 200, json: providerFails ? {error: 'The assistant connection could not be verified.'} : {ok: true, checkedAt: healthy.checkedAt, check: 'assistant-response'}});
+    }
     if(path === '/api/data-protection') {
       calls++;
       const snapshot = structuredClone(report);
@@ -42,7 +48,7 @@ try {
   await expect(card).toContainText('Enabled on all 4 private tables');
   await expect(card).toContainText('Blocked for public app roles');
   await expect(card).toContainText('cannot verify your backup schedule');
-  await expect(card).toContainText('temporary assistant chats');
+  await expect(card).toContainText('Saved assistant conversations');
   assert.equal(await card.getByRole('link', {name: 'Open Supabase'}).getAttribute('href'), 'https://supabase.com/dashboard');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth + 1));
   mkdirSync('/tmp/potshaven-checks', {recursive: true});
@@ -63,6 +69,18 @@ try {
   await expect(card.getByText('Stored in the connected database', {exact: true})).toHaveCount(0);
   console.log('PASS failed checks clear stale assurances, incomplete RLS is flagged, and local storage is identified honestly');
 
+  const assistantCheck = page.getByRole('region', {name: 'Assistant connection', exact: true});
+  await expect(assistantCheck).toContainText('Not checked in this session.');
+  assert.equal(providerCalls, 0, 'Opening settings must not cause a paid assistant check.');
+  await assistantCheck.getByRole('button', {name: 'Check assistant connection', exact: true}).click();
+  await expect(assistantCheck).toContainText('Assistant responded successfully.');
+  assert.equal(providerCalls, 1);
+  providerFails = true;
+  await assistantCheck.getByRole('button', {name: 'Check assistant connection', exact: true}).click();
+  await expect(assistantCheck.getByRole('alert')).toContainText('could not be verified');
+  await expect(assistantCheck.getByText(/Assistant responded successfully/)).toHaveCount(0);
+  console.log('PASS assistant connection check runs only on owner request and a failed recheck clears the earlier success');
+
   let release;
   hold = new Promise(resolve => {release = resolve;});
   const waiting = new Promise(resolve => {held = resolve;});
@@ -74,6 +92,7 @@ try {
   await expect(page.getByRole('heading', {name: 'Your account', exact: true})).toBeVisible();
   release(); hold = undefined;
   await expect(page.getByRole('region', {name: 'Your saved workspace', exact: true})).toHaveCount(0);
+  await expect(page.getByRole('region', {name: 'Assistant connection', exact: true})).toHaveCount(0);
   const callsBefore = calls;
   await page.reload();
   await expect(page.getByRole('heading', {name: 'Your account', exact: true})).toBeVisible();

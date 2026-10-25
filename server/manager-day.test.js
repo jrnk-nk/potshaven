@@ -60,3 +60,16 @@ test('daily work brief preserves confirmation status and omits financial and con
   assert.ok(!text.includes('700'));
   assert.deepEqual(workspace, before);
 });
+
+test('a site-focused work plan preserves crew and vehicle warnings from other sites', () => {
+  const data = structuredClone(workspace);
+  data.jobs.push({...data.jobs[0], id: 'other-site', title: 'Other site visit', placeId: 'roundabout', time: '09:00'});
+  const text = dailyWorkBrief(data, date, {siteId: 'hotel'});
+  assert.match(text, /1 job scheduled/);
+  assert.match(text, /Site focus: Palm Court/);
+  assert.match(text, /Entrance care/);
+  assert.ok(!text.includes('09:00 · Other site visit'));
+  assert.ok(!text.includes('Median care · due'));
+  assert.match(text, /Check: Ama.*Other site visit/);
+  assert.match(text, /Check: Crew van.*Other site visit/);
+});

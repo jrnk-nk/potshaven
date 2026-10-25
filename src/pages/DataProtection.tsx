@@ -71,6 +71,6 @@ export default function DataProtection() {
     </>}
     <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => void check()}>{busy ? <LoaderCircle size={14} className="studio-spinner"/> : <ShieldCheck size={14}/>} {busy ? 'Checking…' : result ? 'Check again' : 'Check saved workspace'}</button>
     <div className="data-protection-backups"><h3>Recovery backups</h3><p>This check cannot verify your backup schedule or how far back you can restore. Confirm these in your Supabase project’s backup settings.</p><a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer" className="text-link">Open Supabase <ExternalLink size={13}/></a></div>
-    <p className="studio-hint data-protection-scope">Only saved work is stored by the app. Unsent drafts, temporary assistant chats and images linked from other websites are not a database backup.</p>
+    <p className="studio-hint data-protection-scope">Saved assistant conversations are kept privately for each account role. Unsent drafts and images linked from other websites are not a database backup. A failed conversation save is shown in the chat.</p>
   </section>;
 }

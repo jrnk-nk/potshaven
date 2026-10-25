@@ -22,7 +22,9 @@
     "test:roles-home": "node tests/browser-owner-home.mjs",
     "test:activity": "node tests/browser-activity.mjs",
     "test:data-protection": "node tests/browser-data-protection.mjs",
-    "test:security": "node tests/browser-security.mjs"
+    "test:security": "node tests/browser-security.mjs",
+    "test:handoff": "node --test server/business-handoff.test.js",
+    "test:backup": "node --test server/backup-tooling.test.js"
   },
   "dependencies": {
     "@fontsource/dm-sans": "^5.3.0",

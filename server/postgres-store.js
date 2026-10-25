@@ -1,6 +1,6 @@
 import {randomBytes, randomUUID} from 'node:crypto';
 import postgres from 'postgres';
-import {collections, validate, AppError, activityData} from './store.js';
+import {collections, validate, AppError, activityData, assistantConversationKey, assistantConversationOffset, assistantConversationSummary, assistantConversationResult, assistantExchangeInput, nextAssistantConversation} from './store.js';
 import {seedData} from './seed.js';
 import {databaseTlsOptions} from './database-tls.js';
 import {repairLegacySettings} from './settings-repair.js';
@@ -371,6 +371,39 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
     },
     async settings() {
       return (await read("SELECT value FROM potshaven_private.metadata WHERE key = 'settings'"))[0]?.value || {};
+    },
+    async assistantConversations(role, {offset = 0} = {}) {
+      const prefix = assistantConversationKey(role);
+      assistantConversationOffset(offset);
+      const row = (await read(`WITH conversations AS (
+        SELECT key, value FROM potshaven_private.metadata WHERE key LIKE $1
+      ), recent AS (
+        SELECT key, value FROM conversations ORDER BY value->>'updatedAt' DESC, key DESC LIMIT 50 OFFSET $2
+      ) SELECT coalesce((SELECT jsonb_agg(jsonb_build_object('id', value->>'id', 'title', value->>'title', 'updatedAt', value->>'updatedAt', 'version', value->'version', 'messageCount', jsonb_array_length(value->'messages')) ORDER BY value->>'updatedAt' DESC, key DESC) FROM recent), '[]'::jsonb) AS items,
+        (SELECT count(*)::integer FROM conversations) AS total`, [`${prefix}%`, offset]))[0];
+      return {items: row.items.map(assistantConversationSummary), total: row.total, nextOffset: offset + row.items.length < row.total ? offset + row.items.length : null};
+    },
+    async assistantConversation(role, id) {
+      const key = assistantConversationKey(role, id);
+      return assistantConversationResult((await read('SELECT value FROM potshaven_private.metadata WHERE key = $1', [key]))[0]?.value);
+    },
+    async appendAssistantExchange(role, id, input) {
+      const key = assistantConversationKey(role, id), exchange = assistantExchangeInput(input);
+      const previous = await store.assistantConversation(role, id);
+      const next = nextAssistantConversation(id, exchange, previous);
+      if (next.unchanged) return next.value;
+      // The version comparison is performed inside the write. A read before
+      // this statement cannot let a stale device replace a newer exchange.
+      const rows = previous
+        ? await run("UPDATE potshaven_private.metadata SET value = $2::jsonb WHERE key = $1 AND (value->>'version')::integer = $3 RETURNING value", [key, next.value, exchange.expectedVersion])
+        : await run('INSERT INTO potshaven_private.metadata(key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING RETURNING value', [key, next.value]);
+      if (rows.length) return assistantConversationResult(rows[0].value);
+      // A confirmed no-op may be a duplicate request for the same exchange.
+      // Read to confirm it, but never replay an unconfirmed write.
+      const current = await store.assistantConversation(role, id);
+      const concurrent = nextAssistantConversation(id, exchange, current);
+      if (concurrent.unchanged) return concurrent.value;
+      throw new AppError('This conversation changed on another device. Reopen the saved conversation before continuing.', 409);
     },
     async updateSettings(input) {
       const clean = cleanSettings(input);

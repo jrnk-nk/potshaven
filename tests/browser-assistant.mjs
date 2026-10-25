@@ -1,5 +1,6 @@
 // Conversational company management with mocked AI. No paid requests or real company records.
 import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
 import {chromium, expect} from '@playwright/test';
 import {createServer} from 'vite';
 import react from '@vitejs/plugin-react';
@@ -37,6 +38,15 @@ let releaseReply;
 let failRead = false;
 let failWrite = false;
 let changeAfterRead = false;
+const savedChats = new Map();
+let failChatSave = false, holdChatRead = false, releaseChatRead;
+const memoryWrites = [];
+let serverSaves = false, serverHistoryFailure = false;
+function commitExchange(id, pair) {
+  const key = state.role + ':' + id, previous = savedChats.get(key);
+  const chat = {id, role: state.role, title: previous?.title || pair.user.slice(0, 100), updatedAt: new Date().toISOString(), version: pair.expectedVersion + 1, messages: [...(previous?.messages || []), {id: pair.exchangeId + ':user', role: 'user', content: pair.user}, {id: pair.exchangeId + ':assistant', role: 'assistant', content: pair.assistant}]};
+  savedChats.set(key, chat); return chat;
+}
 let response = {
   reply: 'The hotel visit has no crew or vehicle. Here is a plan for you to review.',
   actions: [
@@ -56,16 +66,48 @@ try {
     const path = new URL(request.url()).pathname;
     if (path === '/api/state') return route.fulfill({json: state});
     if (path === '/api/activity') return route.fulfill({json: {items: [], unreadCount: 0}});
+    if (path === '/api/assistant/conversations' && request.method() === 'GET') {
+      const items = [...savedChats.values()].filter(chat => chat.role === state.role).map(({id, title, updatedAt, version, messages}) => ({id, title, updatedAt, version, messageCount: messages.length}));
+      const offset = Number(new URL(request.url()).searchParams.get('offset') || 0);
+      return route.fulfill({json: {items: items.slice(offset, offset + 50), total: items.length, nextOffset: offset + 50 < items.length ? offset + 50 : null}});
+    }
+    if (path.startsWith('/api/assistant/conversations/')) {
+      const id = path.split('/').at(-1), key = state.role + ':' + id;
+      const previous = savedChats.get(key);
+      if (request.method() === 'GET') {
+        const snapshot = structuredClone(previous);
+        if (holdChatRead) await new Promise(resolve => {releaseChatRead = resolve;});
+        return route.fulfill(snapshot ? {json: snapshot} : {status: 404, json: {error: 'Conversation not found.'}});
+      }
+      if (request.method() === 'PUT') {
+        const pair = request.postDataJSON(); memoryWrites.push(pair);
+        if (failChatSave) {failChatSave = false; return route.fulfill({status: 503, json: {error: 'Conversation storage is temporarily unavailable.'}});}
+        if (previous?.messages.some(message => message.id === pair.exchangeId + ':user')) return route.fulfill({json: previous});
+        if ((previous?.version || 0) !== pair.expectedVersion) return route.fulfill({status: 409, json: {error: 'This conversation changed. Reopen the saved conversation before continuing.'}});
+        return route.fulfill({json: commitExchange(id, pair)});
+      }
+    }
     if (path === '/api/assistant/briefing') {
       briefings++;
-      return route.fulfill({json: {summary: 'One visit needs people and transport.', items: [{id: 'hotel-unassigned', title: 'Hotel entrance care needs a crew', detail: 'Assign people before the visit.', page: 'schedule', kind: 'unassigned'}]}});
+      return route.fulfill({json: {summary: 'One visit needs people and transport.', items: [{id: 'hotel-unassigned', title: 'Hotel entrance care needs a crew', detail: 'Assign people before the visit.', page: 'schedule', kind: 'unassigned', severity: 'urgent', href: '#sites?site=hotel'}]}});
     }
     if (path === '/api/assistant' && request.method() === 'POST') {
       requests.push(request.postDataJSON());
       if (holdReply) await new Promise(resolve => {releaseReply = resolve;});
       else await new Promise(resolve => setTimeout(resolve, 120));
       if (failure) {failure = false; return route.fulfill({status: 502, json: {error: 'Your assistant is busy. Please try again.'}});}
+      if (serverSaves) {
+        const {conversation, message} = request.postDataJSON();
+        assert.ok(conversation?.id && conversation.exchangeId && Number.isSafeInteger(conversation.expectedVersion));
+        if (serverHistoryFailure) {serverHistoryFailure = false; return route.fulfill({json: {...response, historyError: 'The reply is ready but history could not be saved.'}});}
+        return route.fulfill({json: {...response, conversation: commitExchange(conversation.id, {...conversation, user: message, assistant: response.reply})}});
+      }
       return route.fulfill({json: response});
+    }
+    if (path === '/api/purchaseRequests' && request.method() === 'POST') {
+      const changes = request.postDataJSON(); writes.push({method: 'POST', collection: 'purchaseRequests', changes});
+      const item = {...changes, id: randomUUID(), status: 'Pending', requestedBy: state.role}; state.purchaseRequests.push(item);
+      return route.fulfill({status: 201, json: item});
     }
     if (path === '/api/jobs' && request.method() === 'GET') {
       if (failRead) {failRead = false; return route.fulfill({status: 503, json: {error: 'Records are temporarily unavailable.'}});}
@@ -101,6 +143,7 @@ try {
   const send = assistant.getByRole('button', {name: 'Send assistant message', exact: true});
   await expect(composer).toBeVisible();
   await expect(assistant.getByText('Hotel entrance care needs a crew', {exact: true})).toBeVisible();
+  await expect(assistant.getByRole('link', {name: /Hotel entrance care needs a crew/})).toHaveAttribute('href', '#sites?site=hotel');
   await expect(send).toBeDisabled();
   await assistant.getByRole('button', {name: 'What needs attention?', exact: true}).click();
   await expect(composer).toHaveValue('What needs attention?');
@@ -116,6 +159,7 @@ try {
   await expect(assignment.getByText('Green pickup', {exact: true})).toBeVisible();
   await expect(assignment.getByText('Check travel time before confirming the route.', {exact: true})).toBeVisible();
   await expect(assistant.locator('.ca-proposal')).toHaveCount(3);
+  await expect(assistant.getByText('Conversation saved', {exact: true})).toBeVisible();
   for (const label of ['Change worker pay', 'Set visit budget', 'Add costed task', 'Link receipt details']) await expect(assistant.getByRole('article', {name: label, exact: true})).toHaveCount(0);
   await expect(assistant.locator('.ca-proposal').getByText(/Agreed pay|Pay basis|Budget|Unit Cost|Receipt Reference/)).toHaveCount(0);
   assert.equal(writes.length, 0, 'AI replies must not save changes without review.');
@@ -271,6 +315,134 @@ try {
   assert.equal(state.jobs[0].notes, 'New instruction from another session');
   assert.deepEqual(runtimeErrors, []);
   console.log('PASS the server precondition protects an assistant suggestion when another edit lands after its freshness check');
+
+  const managerChat = [...savedChats.values()].find(chat => chat.role === 'manager');
+  assert.ok(managerChat);
+  await page.reload();
+  await expect(composer).toBeVisible();
+  await assistant.getByRole('button', {name: 'Saved chats', exact: true}).click();
+  const savedDialog = page.getByRole('dialog', {name: 'Saved conversations', exact: true});
+  await expect(savedDialog.getByText(managerChat.title, {exact: true})).toBeVisible();
+  await expect(savedDialog.getByText('Assign Ama and the pickup to the hotel visit, and prepare a follow-up.', {exact: true})).toHaveCount(0);
+  await savedDialog.getByRole('button', {name: new RegExp(managerChat.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))}).click();
+  await expect(assistant.getByText('Review the updated care instructions.', {exact: true})).toBeVisible();
+  await expect(assistant.locator('.ca-proposal')).toHaveCount(0);
+  await expect(assistant.getByRole('button', {name: 'Save this change', exact: true})).toHaveCount(0);
+  response = {reply: 'The recorded hotel work can be reviewed here.', actions: [], contextScope: {message: 'Focused on Palm Court Hotel. Some older records may be outside this view.'}};
+  await assistant.getByRole('combobox', {name: 'Assistant site focus'}).selectOption('hotel');
+  await composer.fill('Review this site’s recorded progress.'); await send.click();
+  await expect(assistant.getByText(response.reply, {exact: true})).toBeVisible();
+  await expect(assistant.getByText('Conversation saved', {exact: true})).toBeVisible();
+  assert.equal(requests.at(-1).siteId, 'hotel');
+  assert.ok(requests.at(-1).history.some(message => message.content === 'Review the updated care instructions.'));
+  await expect(assistant.getByText(response.contextScope.message, {exact: true})).toBeVisible();
+  console.log('PASS saved role-specific conversations reopen after reload, carry context, and never replay old proposals');
+
+  failChatSave = true; response = {reply: 'This reply remains visible while its conversation save is checked.', actions: []};
+  const aiBeforeFailure = requests.length;
+  await composer.fill('Help with tomorrow’s crew.'); await send.click();
+  await expect(assistant.getByText(response.reply, {exact: true})).toBeVisible();
+  await expect(assistant.locator('.ca-memory-error')).toContainText('Conversation save not confirmed');
+  await composer.fill('A new request waits for this conversation to save.');
+  await expect(send).toBeDisabled();
+  const failedPair = memoryWrites.at(-1);
+  await assistant.getByRole('button', {name: 'Save conversation again', exact: true}).click();
+  await expect(assistant.getByText('Conversation saved', {exact: true})).toBeVisible();
+  assert.equal(requests.length, aiBeforeFailure + 1, 'Retrying history must not make another paid assistant request.');
+  assert.deepEqual(memoryWrites.at(-1), failedPair, 'History retry must retain stable exchange identity.');
+  await assistant.getByRole('button', {name: 'New chat', exact: true}).click();
+  const leaveDialog = page.getByRole('dialog', {name: 'Leave this conversation?', exact: true});
+  await expect(leaveDialog).toBeVisible();
+  await leaveDialog.getByRole('button', {name: 'Keep this conversation', exact: true}).click();
+  await expect(composer).toHaveValue('A new request waits for this conversation to save.');
+  await composer.fill('');
+  await assistant.getByRole('button', {name: 'New chat', exact: true}).click();
+  await expect(assistant.locator('.ca-message')).toHaveCount(0);
+  console.log('PASS failed chat saves preserve replies, retry without AI calls, and warn before discarding unsent drafts');
+
+  state.places.push({id: 'other-site', name: 'Another hotel'});
+  state.jobs.push({id: 'other-visit', title: 'Another hotel visit', placeId: 'other-site', date: '2026-11-02', time: '10:00', type: 'Maintenance', status: 'Scheduled', crewIds: ['ama'], vehicleId: 'pickup', tasks: []});
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(assistant.getByRole('combobox', {name: 'Assistant site focus'}).locator('option[value="other-site"]')).toHaveCount(1);
+  const writesBeforePlan = writes.length, aiBeforePlan = requests.length;
+  await assistant.getByRole('button', {name: 'Work plan', exact: true}).click();
+  const planDialog = page.getByRole('dialog', {name: 'Your work plan', exact: true});
+  await planDialog.getByLabel('Work plan date', {exact: true}).fill('2026-11-02');
+  const planPreview = planDialog.getByRole('textbox', {name: 'Work plan preview', exact: true});
+  await expect(planPreview).toContainText('Hotel entrance care');
+  await expect(planPreview).toContainText('1 job scheduled');
+  await expect(planPreview).toContainText('Ama Mensah also has Another hotel visit');
+  await expect(planPreview).toContainText('Green pickup is also assigned to Another hotel visit');
+  await expect(planPreview).not.toContainText('Site: Another hotel');
+  const whatsapp = planDialog.getByRole('link', {name: 'Open WhatsApp', exact: true});
+  await expect(whatsapp).toHaveAttribute('href', /^https:\/\/wa\.me\/\?text=/);
+  await expect(planDialog.getByText('Nothing is sent until you send it in WhatsApp.', {exact: true})).toBeVisible();
+  assert.equal(writes.length, writesBeforePlan); assert.equal(requests.length, aiBeforePlan);
+  await planDialog.getByRole('button', {name: 'Close dialog', exact: true}).click();
+  console.log('PASS a dated site work plan is previewed for manual WhatsApp sharing without writes or paid requests');
+
+  state.role = 'owner'; await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(assistant.getByText('Plan the work. Find what needs care. Keep things moving.', {exact: true})).toBeVisible();
+  await assistant.getByRole('button', {name: 'Saved chats', exact: true}).click();
+  const ownerChat = [...savedChats.values()].find(chat => chat.role === 'owner');
+  holdChatRead = true; releaseChatRead = undefined;
+  await savedDialog.getByRole('button', {name: new RegExp(ownerChat.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))}).click();
+  await expect.poll(() => typeof releaseChatRead).toBe('function');
+  state.role = 'manager'; await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(assistant.getByText('Plan visits. Assign your team. Follow up on unfinished work.', {exact: true})).toBeVisible();
+  holdChatRead = false; releaseChatRead();
+  await expect(savedDialog).toHaveCount(0);
+  await expect(assistant.getByText(ownerChat.messages[0].content, {exact: true})).toHaveCount(0);
+  assert.deepEqual(runtimeErrors, []);
+  console.log('PASS a late saved owner conversation cannot appear after switching to the manager account');
+
+  const beforeFocus = briefings, beforeRefreshAi = requests.length;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect.poll(() => briefings).toBeGreaterThan(beforeFocus);
+  const beforeHidden = briefings;
+  await page.evaluate(() => {Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => 'hidden'}); window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange'));});
+  await page.waitForTimeout(150);
+  assert.equal(briefings, beforeHidden);
+  await page.evaluate(() => {Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => 'visible'}); document.dispatchEvent(new Event('visibilitychange'));});
+  await expect.poll(() => briefings).toBeGreaterThan(beforeHidden);
+  assert.equal(requests.length, beforeRefreshAi);
+  console.log('PASS attention checks refresh on return to the visible app without automatic paid requests');
+
+  serverSaves = true;
+  const beforeServerSave = memoryWrites.length;
+  response = {reply: 'A supply request is ready for your review.', actions: [{id: 'supply', label: 'Request twelve nursery pots', collection: 'purchaseRequests', operation: 'create', changes: {title: 'Nursery pots', quantity: 12, requestType: 'Restock', placeId: 'hotel', status: 'Pending', requestedBy: 'manager'}}]};
+  await composer.fill('Prepare a request for twelve nursery pots for the hotel.'); await send.click();
+  const supplyProposal = assistant.getByRole('article', {name: 'Request twelve nursery pots', exact: true});
+  await expect(supplyProposal).toBeVisible();
+  await expect(assistant.getByText('Conversation saved', {exact: true})).toBeVisible();
+  assert.equal(memoryWrites.length, beforeServerSave, 'A server-confirmed conversation needs no second history write.');
+  assert.equal(state.purchaseRequests.length, 0, 'The assistant must not submit a supply request before review.');
+  await supplyProposal.getByRole('button', {name: 'Save this change', exact: true}).click();
+  await expect(supplyProposal.getByRole('button', {name: 'Saved', exact: true})).toBeDisabled();
+  assert.equal(state.purchaseRequests[0].status, 'Pending'); assert.equal(state.purchaseRequests[0].quantity, 12);
+  console.log('PASS server-confirmed history avoids a second write and supply requests wait for review and owner approval');
+
+  serverHistoryFailure = true; response = {reply: 'This answer is ready while the server’s history save needs a check.', actions: []};
+  await composer.fill('Check the transport needs.'); await send.click();
+  await expect(assistant.locator('.ca-memory-error')).toContainText('Conversation save not confirmed');
+  assert.equal(memoryWrites.length, beforeServerSave, 'An uncertain server history save must not automatically be retried.');
+  const uncertainRequest = requests.at(-1).conversation, aiBeforeHistoryRetry = requests.length;
+  await assistant.getByRole('button', {name: 'Save conversation again', exact: true}).click();
+  await expect(assistant.getByText('Conversation saved', {exact: true})).toBeVisible();
+  assert.equal(memoryWrites.at(-1).exchangeId, uncertainRequest.exchangeId); assert.equal(requests.length, aiBeforeHistoryRetry);
+  console.log('PASS an uncertain server history save waits for explicit retry with its original exchange ID');
+
+  for (let index = 0; index < 51; index++) {
+    const id = randomUUID(); savedChats.set('manager:' + id, {id, role: 'manager', title: `Earlier conversation ${index + 1}`, updatedAt: new Date().toISOString(), version: 1, messages: [{id: id + ':user', role: 'user', content: 'An older saved message'}, {id: id + ':assistant', role: 'assistant', content: 'An older saved reply'}]});
+  }
+  await assistant.getByRole('button', {name: 'Saved chats', exact: true}).click();
+  await expect(savedDialog.getByRole('button', {name: 'Load more conversations', exact: true})).toBeVisible();
+  await expect(savedDialog.getByText('Earlier conversation 51', {exact: true})).toHaveCount(0);
+  await savedDialog.getByRole('button', {name: 'Load more conversations', exact: true}).click();
+  await expect(savedDialog.getByText('Earlier conversation 51', {exact: true})).toBeVisible();
+  await expect(savedDialog.getByRole('button', {name: 'Load more conversations', exact: true})).toHaveCount(0);
+  assert.deepEqual(runtimeErrors, []);
+  console.log('PASS older saved conversations remain reachable through history pagination');
 
 
 } finally {

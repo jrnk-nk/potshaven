@@ -42,7 +42,8 @@ npm run test:production  # Production assets, private sign-in, empty workspace
 npm run test:browser     # Operations, inventory, recovery, images, studio, assistant, workforce and sign-in
 npm run test:studio      # Photo attachments, saved chats, edits and mobile composer
 npm run test:auth        # Owner/manager sign-in, expiry and workspace-load recovery
-npm run test:assistant   # Grounded attention, reviewed changes, failures and mobile layout
+npm run test:assistant   # Saved conversations, site focus, reviewed changes and mobile layout
+npm run test:handoff     # Real HTTP owner/manager workflow and isolated PostgreSQL restore
 npm run test:workforce   # External worker agreements, assignments, WhatsApp and persistence
 npm run test:manager     # Daily brief, operational reminders, assignments and mobile layout
 npm run test:manager-access # Authenticated UI/API role boundaries and operational work
@@ -60,7 +61,8 @@ Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwr
 - Project deadlines and checklist progress within each site, alongside recurring maintenance visits and assigned people/vehicles.
 - Supply requests and owner approvals, equipment servicing, plant care guides, crew skills/workload and transport availability.
 - Company staff and external workers with daily, weekly, fixed-term, or job-completion agreements. Save agreement dates, signed references and work instructions; job assignments flag availability and other visits on the same day. Pay fields remain unavailable while money features are disabled.
-- A Company assistant that answers from saved business records and prepares job, worker, vehicle, and issue changes for review. Save each change explicitly. Its attention list checks overdue jobs, unchecked completion tasks, missing assignments, low stock, and expiring agreements without a model call.
+- A Company assistant with private saved conversations for each role, site-focused planning, recent visit summaries and reviewed job, worker, vehicle, issue and supply-request proposals. Save operational changes explicitly. Its prioritized attention list checks overdue work, unchecked completion tasks, coming-week assignments, low stock, equipment servicing, pending supplies and expiring agreements without a model call. A dated work-plan preview can be copied or opened in WhatsApp; the manager chooses who receives it and sends it.
+- Owner Settings includes an explicit assistant response check. This makes one short provider request without company records; configured keys alone are never treated as a verified reply.
 - An owner-only Manager activity inbox for saved requests, site visits, job progress/completion, assignments, stock use and other permitted manager changes. Events and their related changes commit together. The inbox shows the latest 100 updates, keeps a durable unread count, and checks every 30 seconds while visible, as well as on focus/reconnection. The shared sign-in is labelled **Manager account**; it does not identify an individual worker.
 - Client issues, branded service reports and an owner portfolio.
 - A gallery that opens first in the studio: one chosen or latest image per space, with search and favourites. Open a space to attach photos and refine the idea in its own chat. The latest idea stays visible; earlier work is tucked behind one control. Earlier versions stay available for editing, portfolio sharing and branded downloads. Rename, link sites, favourite, and choose the gallery image; compare the original photo with a design. Client presentation mode shows only the friendly space title, image, and company branding. Gallery/portfolio captions and downloaded filenames omit raw instructions and provider/model details. Quick edits fill a draft for review, including a prompt based on plants actually in stock. Unsent text survives a reload in the current signed-in browser tab (sign-out or an account change clears it); in-tab space switching keeps each space’s draft and photos separate. Photo attachments must be re-added after a reload. Include measurements directly in the message when useful; concepts are not construction drawings.
@@ -71,7 +73,7 @@ AI replies and concepts need the configured provider key, model access, and bill
 
 Supabase uses a private schema with RLS enabled on every app table and browser-role access revoked. The backend still enforces owner/manager permissions. Sign-out revokes its session in the database so a copied cookie cannot reopen the workspace. Owners can check actual storage and access protection in **Settings → Your saved workspace**.
 
-Saved records and uploaded/generated images persist in the hosted database. Automatic backups and point-in-time recovery are separate Supabase account settings; this app cannot verify or enable them with its database health check. See [data protection and recovery](docs/DATA_PROTECTION.md) for the storage scope and a restore verification checklist.
+Saved records and uploaded/generated images persist in the hosted database. Automatic backups and point-in-time recovery are separate Supabase account settings; this app cannot verify or enable them with its database health check. See [data protection and recovery](docs/DATA_PROTECTION.md) for encrypted backup tooling and an isolated restore checklist. The [business handoff drill](docs/BUSINESS_HANDOFF_DRILL.md) tests actual HTTP operations and restoration using disposable PostgreSQL; it does not certify production provider backups.
 
 ## Loading and recovery
 

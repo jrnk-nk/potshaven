@@ -14,6 +14,8 @@ import {assertNoFinancialFields, withoutFinancialFields, preserveFinancialMetada
 import {installActivity, managerActivity} from './activity.js';
 import {applySecurityHeaders} from './security-headers.js';
 import {installDataProtection} from './data-protection.js';
+import {installProviderReadiness} from './provider-readiness.js';
+import {installAssistantHistory} from './assistant-history.js';
 
 const safeEqual = (left, right) => {
   const a = Buffer.from(String(left || '')), b = Buffer.from(String(right || ''));
@@ -182,6 +184,8 @@ export function createApp({
   app.use('/api', (req, res, next) => req.role ? next() : next(new AppError('Please sign in to continue.', 401)));
   installDataProtection(app, {store, mediaStorage});
   installActivity(app, {store});
+  installAssistantHistory(app, {store});
+  installProviderReadiness(app, {key: imageKey, model: assistantModel, fetchAssistant});
   installAssistant(app, {store, key: imageKey, model: assistantModel, fetchAssistant});
   app.get('/api/state', async (req, res, next) => {
     try { res.json(await pictures({ ...workspaceForRole(await store.state(), req.role), role: req.role, demoMode, imageGenerationConfigured: req.role === 'owner' && Boolean(imageKey), assistantConfigured: Boolean(imageKey), ...(req.role === 'owner' ? {imageModel, imageQuality, imageSize} : {}) })); }

@@ -11,6 +11,52 @@ export class AppError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
 }
 
+const conversationId = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
+export function assistantConversationKey(role, id) {
+  if (!['owner', 'manager'].includes(role)) throw new AppError('Please sign in to open saved conversations.', 401);
+  if (id === undefined) return `assistant-chat:${role}:`;
+  if (!conversationId(id)) throw new AppError('Choose a valid conversation.');
+  return `assistant-chat:${role}:${id.toLowerCase()}`;
+}
+export function assistantConversationOffset(value = 0) {
+  if (!Number.isInteger(value) || value < 0 || value > 1000000) throw new AppError('Choose a conversation offset from 0 to 1,000,000.');
+  return value;
+}
+export function assistantConversationSummary(value) {
+  if (!value || !conversationId(value.id) || typeof value.title !== 'string' || !value.title.trim() || value.title.length > 80 || typeof value.updatedAt !== 'string' || !Number.isFinite(Date.parse(value.updatedAt)) || !Number.isInteger(value.version) || value.version < 1 || value.version > 50 || value.messageCount !== value.version * 2) throw new AppError('This saved conversation could not be opened. Please try again.', 503);
+  return {id: value.id.toLowerCase(), title: value.title, updatedAt: value.updatedAt, version: value.version, messageCount: value.messageCount};
+}
+export function assistantConversationResult(value) {
+  if (!value) return undefined;
+  const summary = assistantConversationSummary({...value, messageCount: Array.isArray(value.messages) ? value.messages.length : null});
+  const messages = value.messages.map((message, index) => {
+    const role = index % 2 ? 'assistant' : 'user';
+    if (!message || message.role !== role || typeof message.id !== 'string' || !message.id.endsWith(`:${role}`) || !conversationId(message.id.slice(0, -(role.length + 1))) || typeof message.content !== 'string' || !message.content.trim() || message.content.length > (role === 'user' ? 4000 : 8000) || typeof message.createdAt !== 'string' || !Number.isFinite(Date.parse(message.createdAt))) throw new AppError('This saved conversation could not be opened. Please try again.', 503);
+    if (index % 2 && message.id.slice(0, -10) !== value.messages[index - 1].id.slice(0, -5)) throw new AppError('This saved conversation could not be opened. Please try again.', 503);
+    return {id: message.id, role, content: message.content, createdAt: message.createdAt};
+  });
+  if (new Set(messages.map(message => message.id)).size !== messages.length) throw new AppError('This saved conversation could not be opened. Please try again.', 503);
+  const {messageCount: ignoredCount, ...result} = summary;
+  return {...result, messages};
+}
+export function assistantExchangeInput(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['exchangeId', 'expectedVersion', 'user', 'assistant'].includes(key)) || !conversationId(input.exchangeId) || !Number.isInteger(input.expectedVersion) || input.expectedVersion < 0 || input.expectedVersion > 50 || typeof input.user !== 'string' || !input.user.trim() || input.user.length > 4000 || typeof input.assistant !== 'string' || !input.assistant.trim() || input.assistant.length > 8000) throw new AppError('Save a complete conversation exchange with a valid version.');
+  return {...input, exchangeId: input.exchangeId.toLowerCase()};
+}
+export function nextAssistantConversation(id, exchange, previous) {
+  const saved = assistantConversationResult(previous);
+  const existing = saved?.messages.find(message => message.id === `${exchange.exchangeId}:user`);
+  if (existing) {
+    if (existing.content !== exchange.user || saved.messages.find(message => message.id === `${exchange.exchangeId}:assistant`)?.content !== exchange.assistant) throw new AppError('This message reference already contains a different exchange. Reopen the saved conversation.', 409);
+    return {value: saved, unchanged: true};
+  }
+  if (!saved && exchange.expectedVersion > 0) throw new AppError('Saved conversation not found.', 404);
+  if (saved && saved.version !== exchange.expectedVersion) throw new AppError('This conversation changed on another device. Reopen the saved conversation before continuing.', 409);
+  if (saved?.version === 50) throw new AppError('This conversation is full. Start a new conversation to keep all saved messages.', 409);
+  const timestamp = new Date().toISOString();
+  return {value: {id: id.toLowerCase(), title: saved?.title || exchange.user.trim().replace(/\s+/g, ' ').slice(0, 80), updatedAt: timestamp, version: (saved?.version || 0) + 1, messages: [...(saved?.messages || []), ...['user', 'assistant'].map(role => ({id: `${exchange.exchangeId}:${role}`, role, content: exchange[role], createdAt: timestamp}))]}, unchanged: false};
+}
+
 // Activity is an owner-only operational ledger, separate from company records.
 // Never persist a raw request, notes, financial fields, or a claimed staff name.
 export function activityData(input) {
@@ -155,6 +201,26 @@ export function createStore(filename = '.data/potshaven.db', { seed = true, now 
       db.prepare('DELETE FROM records WHERE collection = ? AND id = ?').run(collection, id);
     },
     settings() { const row = getMeta.get('settings'); return row ? JSON.parse(row.value) : {}; },
+    assistantConversations(role, {offset = 0} = {}) {
+      const prefix = assistantConversationKey(role);
+      assistantConversationOffset(offset);
+      const items = db.prepare("SELECT json_extract(value, '$.id') AS id, json_extract(value, '$.title') AS title, json_extract(value, '$.updatedAt') AS updatedAt, json_extract(value, '$.version') AS version, json_array_length(json_extract(value, '$.messages')) AS messageCount FROM metadata WHERE key LIKE ? ORDER BY json_extract(value, '$.updatedAt') DESC, key DESC LIMIT 50 OFFSET ?").all(`${prefix}%`, offset).map(assistantConversationSummary);
+      const total = db.prepare('SELECT count(*) AS count FROM metadata WHERE key LIKE ?').get(`${prefix}%`).count;
+      return {items, total, nextOffset: offset + items.length < total ? offset + items.length : null};
+    },
+    assistantConversation(role, id) {
+      const row = getMeta.get(assistantConversationKey(role, id));
+      return row ? assistantConversationResult(JSON.parse(row.value)) : undefined;
+    },
+    appendAssistantExchange(role, id, input) {
+      const key = assistantConversationKey(role, id), exchange = assistantExchangeInput(input);
+      return transaction(() => {
+        const previous = store.assistantConversation(role, id);
+        const next = nextAssistantConversation(id, exchange, previous);
+        if (!next.unchanged) setMeta.run(key, JSON.stringify(next.value));
+        return next.value;
+      });
+    },
     isSessionRevoked(key, now = Date.now()) {
       if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key) || !Number.isSafeInteger(now) || now < 0) throw new AppError('Invalid session reference.');
       const row = getMeta.get(`session-revoked:${key}`);

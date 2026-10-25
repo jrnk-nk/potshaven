@@ -1,8 +1,16 @@
-# Reliability and access review — 23 October 2026
+# Reliability and access review — 25 October 2026
 
-This review covers workspace recovery, unified Sites, financial features being temporarily disabled, and the owner’s manager activity inbox. Tests use isolated company data and injected failures; they do not establish that every possible failure has been eliminated.
+This review covers the Company assistant upgrade, an isolated business handoff and recovery drill, workspace security, unified Sites and the owner’s manager activity inbox. Tests use isolated company data and injected failures; they do not establish that every possible failure has been eliminated.
 
 ## Changes
+
+- Company assistant conversations are stored privately per account role in the existing protected metadata table. Completed replies save on the server before the response. Stable exchange IDs and atomic version checks protect retries and concurrent edits; reopening history never restores executable proposals. Older conversations remain available through pagination. Drafts are not saved, and persistence errors remain visible.
+- Site-focused planning and name relevance improve retrieval beyond the first 80 records, while explicit context coverage avoids implying that a bounded reply reviewed every record. Recent visit text, equipment and permitted supply requests support planning. Photos are not analysed by this assistant.
+- Priority alerts include upcoming work, cross-site assignments, equipment servicing, urgent follow-ups and pending supplies. The attention list refreshes every minute while visible and on focus without a paid model call. Work-plan previews preserve assignment warnings from other sites; WhatsApp delivery remains manual.
+- New supply proposals are pending requests requiring positive quantities and valid references. They never approve supplies, order items or change stock. Business mutations still require explicit review and ordinary server permission checks.
+- An owner-only connection check makes a short real provider request without company records. Configured credentials alone are not reported as verified provider access.
+- A real HTTP/PostgreSQL handoff test exercises owner setup, manager work and owner review, then restarts and restores a separate disposable database. The restored copy preserves photos, conversations, stock history, inbox read receipts and RLS. This tests application recovery logic, not the live Supabase backup schedule.
+- Manual operator tooling streams a complete private-schema dump into authenticated encryption and refuses to overwrite existing files or place backups in the repository. Decryption never restores a database. Production account access is still needed to create and verify a live recovery copy.
 
 - Supabase schema migration 4 enables default-deny RLS on all app tables, removes browser-role grants and retains backend authorization. An owner-only check reports actual storage and access protection; backup schedules remain unverified without Supabase account access.
 - Browser headers block framing and unsafe base/form redirects while preserving camera uploads and photo reports. A real browser regression confirms an unrelated website cannot embed the workspace.
@@ -26,9 +34,9 @@ This review covers workspace recovery, unified Sites, financial features being t
 
 Regression tests use temporary SQLite databases, embedded PostgreSQL, injected connection failures and browser workflows. They cover recovery, stock deductions after a lost response, role boundaries, concurrent edits and sign-in isolation. Provider requests in automated studio and assistant tests are mocked.
 
-Release checks passed: `npm run build`, 154 tests in the complete `npm test` run plus the added malformed/oversized-request header regression, the complete 14-script `npm run test:browser` suite, and `npm run test:production`. `npm audit` reported no known dependency vulnerabilities at the time of this review.
+Release checks passed: `npm run build`, 191 tests in the complete `npm test` run, the complete 14-script `npm run test:browser` suite (including 20 assistant scenarios), and `npm run test:production`. `npm audit` reported no known dependency vulnerabilities at the time of this review.
 
-Public production checks confirm site assets, the sign-in screen, a current database health read and rejection of unauthenticated workspace access. They do not verify authenticated company records, paid image generation, API billing, or Supabase dashboard settings and backups.
+Public production checks cover site assets, the sign-in screen, a current database health read and rejection of unauthenticated workspace access. They do not verify authenticated company records, paid image generation, API billing, or Supabase dashboard settings and backups.
 
 ## Operational limits
 

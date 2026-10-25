@@ -31,3 +31,7 @@ There is one shared manager login, so requests are scoped by `requestedBy: manag
 Authenticated media is checked against assets referenced by permitted operational records and company branding. Private design URLs cannot be attached to a manager record to gain access. Media responses use `private, no-store` and vary by Cookie. Signing out clears cached records and private studio drafts after logout succeeds; account changes also clear those drafts. Late responses from a previous account cannot populate the next session.
 
 Daily alerts describe saved records; the manager still confirms actual work and completion with the crew. Preparing a WhatsApp message never sends it automatically.
+
+## Company assistant
+
+Each role has its own saved conversations. Owners cannot browse manager conversations through the history API, and managers cannot browse owner conversations. Reopening history displays text, never old save buttons. Fresh proposals still require review and the ordinary server permission checks. Owner and manager can focus on a site, review the attention list, prepare a dated work-plan draft and propose pending supply requests. Only the owner can run the explicit provider connection check in Settings. No messages are automatically sent to workers.

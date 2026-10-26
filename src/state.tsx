@@ -9,7 +9,7 @@ export type AppData = { [key: string]: any; places: RecordData[]; jobs: RecordDa
 const collections = ['places','jobs','inventory','stockMovements','workers','vehicles','contracts','payments','expenses','purchaseRequests','equipment','issues','careGuides','designs'];
 const empty: AppData = {places:[],jobs:[],inventory:[],workers:[],vehicles:[],contracts:[],payments:[],expenses:[],purchaseRequests:[],equipment:[],issues:[],careGuides:[],designs:[],stockMovements:[],settings:{}};
 type Connection = 'connecting' | 'online' | 'offline' | 'setup';
-type Context = { data: AppData; loading: boolean; refreshing: boolean; error: string; errorCode: string; connection: Connection; hasData: boolean; authenticated: boolean; refresh: () => Promise<void>; signIn: (role: string, password: string) => Promise<void>; signOut: () => Promise<void>; create: (collection: string, payload: any) => Promise<any>; update: (collection: string, id: string, payload: any, expectedRecord?: Record<string,any>) => Promise<any>; remove: (collection: string, id: string) => Promise<void>; notify: (message: string) => void; openJob: (id?: string) => void; toast: string };
+type Context = { data: AppData; loading: boolean; refreshing: boolean; error: string; errorCode: string; connection: Connection; hasData: boolean; authenticated: boolean; refresh: () => Promise<void>; signIn: (role: string, password: string) => Promise<void>; signOut: () => Promise<void>; endSession: () => void; create: (collection: string, payload: any) => Promise<any>; update: (collection: string, id: string, payload: any, expectedRecord?: Record<string,any>) => Promise<any>; remove: (collection: string, id: string) => Promise<void>; notify: (message: string) => void; openJob: (id?: string) => void; toast: string };
 const AppContext = createContext<Context>(null!);
 function workspace(value: any): AppData {
   if (!value || typeof value !== 'object' || collections.some(key => !Array.isArray(value[key])) || !value.settings || typeof value.settings !== 'object' || Array.isArray(value.settings)) {
@@ -18,7 +18,7 @@ function workspace(value: any): AppData {
   return {...value,settings:withBrandDefaults(value.settings)};
 }
 const delay = (ms:number) => new Promise(resolve=>setTimeout(resolve,ms));
-function clearStudioDrafts(){try{for(const key of Object.keys(sessionStorage))if(key.startsWith('potshaven:studio-draft:'))sessionStorage.removeItem(key);localStorage.removeItem('potshaven:design-conversation');}catch{/* Private browser storage may be disabled. */}}
+function clearStudioDrafts(){try{for(const key of Object.keys(sessionStorage))if(key.startsWith('potshaven:studio-draft:')||key.startsWith('potshaven:studio-request:'))sessionStorage.removeItem(key);localStorage.removeItem('potshaven:design-conversation');}catch{/* Private browser storage may be disabled. */}}
 export function AppProvider({children}: {children: React.ReactNode}) {
   const [data,setData] = useState<AppData>(empty), [loading,setLoading] = useState(true), [refreshing,setRefreshing] = useState(false), [error,setError] = useState(''), [errorCode,setErrorCode] = useState(''), [authenticated,setAuthenticated] = useState(true), [toast,setToast] = useState(''), [connection,setConnection] = useState<Connection>('connecting'), [hasData,setHasData] = useState(false);
   const mounted=useRef(true), loaded=useRef(false), connectionRef=useRef<Connection>('connecting'), inFlight=useRef<Promise<void>|null>(null), flightEpoch=useRef(0), epoch=useRef(0), lastSuccess=useRef(0), retryTimer=useRef<ReturnType<typeof setTimeout>|null>(null), recoveryAttempts=useRef(0), sessionVersion=useRef(0);
@@ -123,7 +123,7 @@ export function AppProvider({children}: {children: React.ReactNode}) {
   };
   const remove=async(collection:string,id:string)=>{const version=sessionVersion.current;await mutate(`/${collection}/${encodeURIComponent(id)}`,{method:'DELETE'});ensureSession(version);reconcile(collection,null,id);};
   const openJob=(id?:string)=>window.dispatchEvent(new CustomEvent('potshaven:job',{detail:id}));
-  return <AppContext.Provider value={{data,loading,refreshing,error,errorCode,connection,hasData,authenticated,refresh,signIn,signOut,create,update,remove,notify:setToast,openJob,toast}}>{children}</AppContext.Provider>;
+  return <AppContext.Provider value={{data,loading,refreshing,error,errorCode,connection,hasData,authenticated,refresh,signIn,signOut,endSession:expireSession,create,update,remove,notify:setToast,openJob,toast}}>{children}</AppContext.Provider>;
 }
 export const useApp=()=>useContext(AppContext);
 export const today=()=>new Date().toLocaleDateString('en-CA',{timeZone:'Africa/Accra'});

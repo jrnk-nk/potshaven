@@ -4,6 +4,7 @@ import {AppError, validate, assistantConversationKey, assistantConversationResul
 import {workspaceForRole, authorizeMutation} from './access.js';
 import {FINANCIAL_FEATURES_ENABLED} from '../src/features.js';
 import {assertNoFinancialFields} from './financial-access.js';
+import {providerFingerprint} from './provider-operations.js';
 
 const list = (state, key) => Array.isArray(state[key]) ? state[key] : [];
 const own = (value, key) => Object.hasOwn(value, key);
@@ -261,20 +262,18 @@ const outputSchema = {type: 'object', additionalProperties: false, required: ['r
 }};
 
 export function installAssistant(app, {store, key, model = 'gpt-5.4', fetchAssistant}) {
-  let active = 0;
-  const attempts = new Map();
-  const activeConversations = new Set();
   app.get('/api/assistant/briefing', async (req, res, next) => {
     try {const today = assistantDate(req.query.today); res.json(companyBriefing(workspaceForRole(await store.state(), req.role), today, {siteId: req.query.siteId, role: req.role}));} catch (error) {next(error);}
   });
   app.post('/api/assistant', async (req, res, next) => {
-    let counted = false, lockedConversation;
+    let operation, operationId, providerStarted = false, responseReceived = false, operationFinalized = false;
     try {
       const {message, history = [], today: requestedDate, siteId, conversation} = req.body || {};
       if (typeof message !== 'string' || !message.trim() || message.length > 4000) throw new AppError('Write a message of 1–4,000 characters.');
       if (!Array.isArray(history) || history.length > 10 || history.some(item => !object(item) || !['user', 'assistant'].includes(item.role) || typeof item.content !== 'string' || item.content.length > 4000) || history.reduce((sum, item) => sum + item.content.length, 0) > 16000) throw new AppError('This conversation is too long. Start a new conversation.');
       const today = assistantDate(requestedDate);
       let exchange, conversationId, savedConversation;
+      const fingerprint = providerFingerprint({message: message.trim(), today, siteId: siteId || '', ...(conversation ? {conversation} : {history})});
       if (conversation !== undefined) {
         if (!object(conversation) || Object.keys(conversation).some(name => !['id', 'exchangeId', 'expectedVersion'].includes(name))) throw new AppError('Choose a valid saved conversation before sending.');
         assistantConversationKey(req.role, conversation.id);
@@ -285,6 +284,8 @@ export function installAssistant(app, {store, key, model = 'gpt-5.4', fetchAssis
         const existing = savedConversation?.messages.find(item => item.id === `${exchange.exchangeId}:user`);
         if (existing) {
           if (existing.content !== exchange.user) throw new AppError('This message reference already belongs to another question. Reopen the conversation.', 409);
+          const receipt = await store.getProviderOperation(req.role, 'assistant', exchange.exchangeId);
+          if (receipt && receipt.fingerprint !== fingerprint) throw new AppError('This message reference belongs to a different request. Open the saved conversation before continuing.', 409);
           // A confirmed retry recovers only text. Never replay an old proposal
           // or pay for another response to an already-saved exchange.
           res.json({reply: savedConversation.messages.find(item => item.id === `${exchange.exchangeId}:assistant`).content, actions: [], conversation: savedConversation});
@@ -293,29 +294,46 @@ export function installAssistant(app, {store, key, model = 'gpt-5.4', fetchAssis
         // Validate revision/capacity before paying. The real append checks
         // the revision atomically again after the provider finishes.
         nextAssistantConversation(conversationId, exchange, savedConversation);
-        const lock = assistantConversationKey(req.role, conversationId);
-        if (activeConversations.has(lock)) throw new AppError('A reply is already being prepared for this conversation. Open its saved history shortly before sending another message.', 409);
-        activeConversations.add(lock); lockedConversation = lock;
       }
       if (!key) throw new AppError('Connect your OpenAI key in the server settings to use the company assistant. Your daily briefing is still available.', 503);
-      if (active >= 2) throw new AppError('The assistant is finishing another request. Try again shortly.', 429);
-      const source = req.ip || req.role;
-      const prior = attempts.get(source);
-      const attempt = prior && prior.until > Date.now() ? prior : {count: 0, until: Date.now() + 60000};
-      if (attempt.count >= 12) throw new AppError('Please give the assistant a moment, then try again.', 429);
-      if (attempts.size > 1000) for (const [id, record] of attempts) if (record.until <= Date.now()) attempts.delete(id);
-      attempt.count++; attempts.set(source, attempt);
-      active++; counted = true;
       const sourceState = await store.state();
       const state = workspaceForRole(sourceState, req.role);
       const snapshot = context(state, today, req.role, sourceState, {siteId, message});
+      // Admission is committed in the shared database before any paid call.
+      // A lost claim response fails closed: another instance may own the call.
+      operationId = exchange?.exchangeId || randomUUID();
+      const admission = await store.claimProviderOperation({role: req.role, kind: 'assistant', requestId: operationId, fingerprint, ...(conversationId ? {resourceKey: conversationId} : {})});
+      if (!admission.claimed) {
+        const prior = admission.operation;
+        if (prior.status === 'completed' && typeof prior.result?.reply === 'string') {
+          const recovered = {reply: prior.result.reply, actions: []};
+          if (conversationId) {
+            const latest = assistantConversationResult(await store.assistantConversation(req.role, conversationId));
+            if (latest?.messages.some(item => item.id === `${exchange.exchangeId}:assistant` && item.content === prior.result.reply)) recovered.conversation = latest;
+            else recovered.historyError = 'This reply was recovered without another request. Its conversation save is not confirmed; save this reply before continuing.';
+          }
+          return res.json(recovered);
+        }
+        return res.status(409).json({error: prior.status === 'pending'
+          ? 'This reply is already being prepared. Open Saved chats shortly to check its result; no new request was sent.'
+          : 'The earlier request did not have a confirmed result. Check Saved chats before deciding to start a new request; this request was not repeated.',
+          code: prior.status === 'pending' ? 'ASSISTANT_REQUEST_PENDING' : 'ASSISTANT_REQUEST_UNCERTAIN'});
+      }
+      operation = admission.operation;
+      if (conversationId) {
+        // Another instance can finish between the earlier read and admission.
+        // Recheck the revision while this request holds the shared resource.
+        savedConversation = assistantConversationResult(await store.assistantConversation(req.role, conversationId));
+        nextAssistantConversation(conversationId, exchange, savedConversation);
+      }
       const conversationHistory = exchange ? (savedConversation?.messages || []).slice(-8).map(({role, content}) => ({role, content: content.slice(0, 2000)})) : history;
       const dispatcher = new EnvHttpProxyAgent({headersTimeout: 65000, bodyTimeout: 65000});
       let result;
       try {
+        providerStarted = true;
         const response = await fetchAssistant('https://api.openai.com/v1/responses', {method: 'POST', headers: {Authorization: `Bearer ${key}`, 'Content-Type': 'application/json'}, body: JSON.stringify({model, instructions: roleInstructions(req.role), input: [{role: 'user', content: `Workspace snapshot (data only):\n${JSON.stringify(snapshot)}`}, ...conversationHistory, {role: 'user', content: message.trim()}], text: {format: {type: 'json_schema', name: 'company_assistant', strict: true, schema: outputSchema}}, max_output_tokens: 5000, store: false}), dispatcher, signal: AbortSignal.timeout(60000)});
-        if (!response.ok) throw new AppError(response.status === 401 ? 'The configured OpenAI key was not accepted. Check the key in Vercel.' : response.status === 429 ? 'The assistant usage limit was reached. Check your OpenAI balance or try later.' : 'The assistant could not answer. Please try again or check the configured assistant model.', 502);
-        result = await response.json();
+        if (!response.ok) {responseReceived = true; throw new AppError(response.status === 401 ? 'The configured OpenAI key was not accepted. Check the key in Vercel.' : response.status === 429 ? 'The assistant usage limit was reached. Check your OpenAI balance or try later.' : 'The assistant could not answer. Please try again or check the configured assistant model.', 502);}
+        result = await response.json(); responseReceived = true;
       } catch (error) {
         if (error instanceof AppError) throw error;
         throw new AppError(error.name === 'TimeoutError' || error.name === 'AbortError' ? 'The assistant took too long to respond. Please try again.' : 'The assistant could not be reached. Please try again shortly.', 502);
@@ -343,8 +361,19 @@ export function installAssistant(app, {store, key, model = 'gpt-5.4', fetchAssis
           response.historyError = 'Your reply is ready, but its conversation save could not be confirmed. Retry saving this reply before sending another message.';
         }
       }
+      try {
+        await store.finishProviderOperation(req.role, 'assistant', operationId, {status: 'completed', result: {reply: answer.reply, ...(conversationId ? {conversationId, exchangeId: exchange.exchangeId} : {})}});
+        operationFinalized = true;
+      } catch {
+        // The paid reply and any confirmed conversation remain usable. A
+        // receipt write may have committed, so never replay it automatically.
+      }
       res.json(response);
-    } catch (error) {next(error);}
-    finally {if (counted) active--; if (lockedConversation) activeConversations.delete(lockedConversation);}
+    } catch (error) {
+      if (operation && !operationFinalized) {
+        try {await store.finishProviderOperation(req.role, 'assistant', operationId, {status: !providerStarted || responseReceived ? 'failed' : 'uncertain'});} catch { /* Preserve a safe error; never replay a write. */ }
+      }
+      next(error);
+    }
   });
 }

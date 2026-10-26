@@ -29,6 +29,7 @@ Object.assign(state, {
   inventory: [{id: 'plant-1', name: 'Bird of paradise', category: 'Plants', quantity: 18, minStock: 2, unit: 'pots'}, {id: 'plant-2', name: 'Snake plant', category: 'Plants', quantity: 7, minStock: 1, unit: 'plants'}, {id: 'plant-empty', name: 'Out-of-stock fern', category: 'Plants', quantity: 0, minStock: 1}, {id: 'tool-1', name: 'Pruning shears', category: 'Tools', quantity: 4, minStock: 1}],
 });
 const generationRequests = [];
+const requestReceipts = new Map();
 let failNextGeneration = false;
 let successfulGenerations = 0;
 
@@ -58,12 +59,18 @@ try {
     const path = new URL(request.url()).pathname;
     if (path === '/api/state') return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(state)});
     if (path === '/api/activity') return route.fulfill({json: {items: [], unreadCount: 0}});
+    if (path.startsWith('/api/designs/requests/') && request.method() === 'GET') {
+      const receipt = requestReceipts.get(path.split('/').at(-1));
+      return route.fulfill({status: receipt ? 200 : 404, json: receipt || {error: 'Request not found.'}});
+    }
     if (path === '/api/designs/generate' && request.method() === 'POST') {
       const body = request.postDataJSON();
+      assert.match(body.requestId, /^[a-f0-9-]{36}$/i, 'Generation must include its recoverable request reference.');
       generationRequests.push(body);
       await new Promise(resolve => setTimeout(resolve, 700));
       if (failNextGeneration) {
         failNextGeneration = false;
+        requestReceipts.set(body.requestId, {status: 'failed', createdAt: new Date().toISOString()});
         return route.fulfill({status: 502, contentType: 'application/json', body: JSON.stringify({error: 'The image service is busy. Please try again.'})});
       }
       const parent = state.designs.find(design => design.id === body.parentDesignId);
@@ -78,6 +85,7 @@ try {
         instructionHistory: [...(parent?.instructionHistory || []), body.prompt],
       };
       state.designs.push(design);
+      requestReceipts.set(body.requestId, {status: 'completed', createdAt: new Date().toISOString(), design});
       return route.fulfill({status: 201, contentType: 'application/json', body: JSON.stringify(design)});
     }
     if (path.startsWith('/api/designs/') && request.method() === 'PATCH') {
@@ -264,10 +272,15 @@ try {
   assert.equal(state.designs.length, 3);
   await page.waitForTimeout(300);
   assert.equal(generationRequests.length, 4, 'An image failure must never trigger an automatic paid retry.');
+  await expect(send).toBeDisabled();
+  await studio.getByRole('button', {name: 'Check request', exact: true}).click();
+  await expect(send).toBeEnabled();
+  assert.equal(generationRequests.length, 4, 'Checking a failed request must never make a paid request.');
   await send.click();
   await expect(studio.getByAltText('Design version 4', {exact: true})).toBeVisible();
   await expect(studio.locator('.dc-turn')).toHaveCount(1);
   assert.equal(generationRequests.length, 5);
+  assert.notEqual(generationRequests[4].requestId, generationRequests[3].requestId, 'A confirmed failed request starts a new explicit attempt.');
   assert.equal(generationRequests[4].prompt, failedPrompt);
   assert.equal(generationRequests[4].referenceImages.length, 1);
   console.log('PASS a failed generation preserves the message and attachments and only retries when asked');

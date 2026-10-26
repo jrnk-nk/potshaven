@@ -7,6 +7,7 @@ import DesignChat from './DesignChat';
 import BrandSignature from '../BrandSignature';
 import DataProtection from './DataProtection';
 import AssistantConnection from './AssistantConnection';
+import AccountSecurity from './AccountSecurity';
 
 type Row = Record<string, any>;
 
@@ -148,5 +149,6 @@ function CompanySettingsPage() {
     </div></form>
     <DataProtection/>
     <AssistantConnection/>
+    <AccountSecurity/>
   </>;
 }

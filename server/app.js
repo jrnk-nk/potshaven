@@ -16,6 +16,8 @@ import {applySecurityHeaders} from './security-headers.js';
 import {installDataProtection} from './data-protection.js';
 import {installProviderReadiness} from './provider-readiness.js';
 import {installAssistantHistory} from './assistant-history.js';
+import {installAccountSecurity} from './account-security.js';
+import {providerFingerprint} from './provider-operations.js';
 
 const safeEqual = (left, right) => {
   const a = Buffer.from(String(left || '')), b = Buffer.from(String(right || ''));
@@ -91,10 +93,10 @@ export function createApp({
       if (parts.length === 2 && payload && safeEqual(sign(payload), signature)) {
         try {
           const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString());
-          if (['owner', 'manager'].includes(parsed.role) && Number.isSafeInteger(parsed.expires) && parsed.expires > Date.now()) {
+          if (['owner', 'manager'].includes(parsed.role) && Number.isSafeInteger(parsed.expires) && parsed.expires > Date.now() && (parsed.generation === undefined || Number.isSafeInteger(parsed.generation) && parsed.generation >= 0)) {
             // The digest supports revoking cookies issued before nonce fields
             // were added. No raw token is written to the database.
-            return {role: parsed.role, expiresAt: parsed.expires, key: createHmac('sha256', sessionSigningKey).update(`session-revocation:${cookie}`).digest('hex')};
+            return {role: parsed.role, generation: parsed.generation ?? 0, expiresAt: parsed.expires, key: createHmac('sha256', sessionSigningKey).update(`session-revocation:${cookie}`).digest('hex')};
           }
         } catch { /* malformed session is unauthenticated */ }
       }
@@ -119,8 +121,9 @@ export function createApp({
     req.role = demoMode ? 'owner' : null;
     if (req.authSession) {
       try {
-        if (typeof store.isSessionRevoked !== 'function') throw new Error('Session verification unavailable.');
-        if (!await store.isSessionRevoked(req.authSession.key)) req.role = req.authSession.role;
+        if (typeof store.isSessionRevoked !== 'function' || typeof store.getSessionGeneration !== 'function') throw new Error('Session verification unavailable.');
+        const generation = await store.getSessionGeneration(req.authSession.role);
+        if (generation === req.authSession.generation && !await store.isSessionRevoked(req.authSession.key)) req.role = req.authSession.role;
       } catch (error) {
         // A revoked session must not become usable during a database outage.
         return res.status(503).json(databaseFailure(error));
@@ -142,8 +145,10 @@ export function createApp({
   const failedLogins = new Map();
   app.post('/api/auth/login', async (req, res, next) => {
     try {
-      const { role, password } = req.body || {};
+      const { role } = req.body || {};
+      const password = req.body?.password ?? (demoMode ? '' : undefined);
       if (!['owner', 'manager'].includes(role)) throw new AppError('Choose owner or manager.');
+      if (typeof password !== 'string' || password.length > 1024) throw new AppError('Enter your password using at most 1,024 characters.');
       // A manager sign-in must not reset failed owner guesses, and mistakes
       // signing in to one role must not lock the other role out.
       const source = createHmac('sha256', sessionSigningKey).update(`login-attempt:${JSON.stringify([req.ip, role])}`).digest('hex');
@@ -164,7 +169,8 @@ export function createApp({
       }
       if (!allowed) throw new AppError('Too many sign-in attempts. Please try again in 15 minutes.', 429);
       if (!accepted) throw new AppError('Incorrect password or role is not configured.', 401);
-      const payload = Buffer.from(JSON.stringify({ role, expires: Date.now() + 12 * 60 * 60 * 1000, nonce: randomUUID() })).toString('base64url');
+      const generation = await store.getSessionGeneration(role);
+      const payload = Buffer.from(JSON.stringify({ role, generation, expires: Date.now() + 12 * 60 * 60 * 1000, nonce: randomUUID() })).toString('base64url');
       res.cookie('potshaven_session', `${payload}.${sign(payload)}`, { httpOnly: true, sameSite: 'strict', secure: req.secure || req.headers['x-forwarded-proto'] === 'https', maxAge: 12 * 60 * 60 * 1000 });
       res.json({ role, demoMode });
     } catch (error) { next(error); }
@@ -182,10 +188,11 @@ export function createApp({
     res.clearCookie('potshaven_session'); res.json({ ok: true });
   });
   app.use('/api', (req, res, next) => req.role ? next() : next(new AppError('Please sign in to continue.', 401)));
+  installAccountSecurity(app, {store, ownerPassword, managerPassword, sessionSigningKey, demoMode});
   installDataProtection(app, {store, mediaStorage});
   installActivity(app, {store});
   installAssistantHistory(app, {store});
-  installProviderReadiness(app, {key: imageKey, model: assistantModel, fetchAssistant});
+  installProviderReadiness(app, {store, key: imageKey, model: assistantModel, fetchAssistant});
   installAssistant(app, {store, key: imageKey, model: assistantModel, fetchAssistant});
   app.get('/api/state', async (req, res, next) => {
     try { res.json(await pictures({ ...workspaceForRole(await store.state(), req.role), role: req.role, demoMode, imageGenerationConfigured: req.role === 'owner' && Boolean(imageKey), assistantConfigured: Boolean(imageKey), ...(req.role === 'owner' ? {imageModel, imageQuality, imageSize} : {}) })); }
@@ -275,11 +282,27 @@ export function createApp({
     }
     return {...image, extension: match[2]};
   }
-  app.post('/api/designs/generate', async (req, res, next) => {
+  app.get('/api/designs/requests/:requestId', async (req, res, next) => {
     try {
       if (req.role !== 'owner') throw new AppError('The design studio is available to the business owner only.', 403);
-      if (!imageKey) throw new AppError('Image generation is not connected yet. Add POTSHAVEN_OPENAI_KEY (or OPENAI_API_KEY) to the server environment to enable the design studio.', 503);
+      const operation = await store.getProviderOperation('owner', 'studio', req.params.requestId);
+      if (!operation) throw new AppError('This request has not been recorded yet. Keep its reference and check again before starting another design.', 404);
+      // A design write may have committed even if its response or the final
+      // receipt update was interrupted. The immutable allocated ID finds it.
+      const design = await store.get('designs', operation.resultId);
+      res.set('Cache-Control', 'private, no-store').vary('Cookie').json({
+        status: design ? 'completed' : operation.status === 'completed' ? 'uncertain' : operation.status,
+        createdAt: operation.createdAt, ...(design ? {design: await pictures(design)} : {}),
+      });
+    } catch (error) {next(error);}
+  });
+  app.post('/api/designs/generate', async (req, res, next) => {
+    let operation, claimed = false, providerStarted = false, definitelyRejected = false, savedDesign;
+    try {
+      if (req.role !== 'owner') throw new AppError('The design studio is available to the business owner only.', 403);
       const body = req.body || {};
+      const requestId = body.requestId === undefined ? randomUUID() : body.requestId;
+      if (typeof requestId !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId)) throw new AppError('Use a valid design request reference.');
       if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > 6000) throw new AppError('Describe your design or edit in 1–6,000 characters.');
       const prompt = body.prompt.trim();
       if (body.measurements !== undefined && (typeof body.measurements !== 'string' || body.measurements.length > 2000)) throw new AppError('Measurements are too long.');
@@ -303,6 +326,15 @@ export function createApp({
         ...uploads,
         ...await Promise.all(inheritedUrls.map(url => savedDesignImage(url))),
       ];
+      if (!imageKey) throw new AppError('Image generation is not connected yet. Add POTSHAVEN_OPENAI_KEY (or OPENAI_API_KEY) to the server environment to enable the design studio.', 503);
+      const {requestId: ignoredRequestId, ...fingerprintBody} = body;
+      const admission = await store.claimProviderOperation({role: 'owner', kind: 'studio', requestId, fingerprint: providerFingerprint({body: fingerprintBody, imageModel, imageQuality, imageSize})});
+      operation = admission.operation; claimed = admission.claimed;
+      if (!claimed) {
+        const existing = await store.get('designs', operation.resultId);
+        if (existing) return res.status(200).json(await pictures(existing));
+        throw new AppError(operation.status === 'failed' ? 'This request was not completed. Check its status before preparing a separate request.' : 'This design request is already recorded. Check request status or your gallery; it will not be generated again automatically.', 409);
+      }
       const dispatcher = new EnvHttpProxyAgent({headersTimeout: 270000, bodyTimeout: 270000});
       let response;
       try {
@@ -312,20 +344,23 @@ export function createApp({
           for (const [index, reference] of references.entries()) {
             form.append(references.length === 1 ? 'image' : 'image[]', new Blob([reference.bytes], {type: reference.contentType}), `${index === 0 && parent ? 'selected-design' : 'reference'}-${index + 1}.${reference.extension}`);
           }
+          providerStarted = true;
           response = await fetchImage('https://api.openai.com/v1/images/edits', {method: 'POST', headers: {Authorization: `Bearer ${imageKey}`}, body: form, dispatcher, signal: AbortSignal.timeout(240000)});
         } else {
+          providerStarted = true;
           response = await fetchImage('https://api.openai.com/v1/images/generations', {method: 'POST', headers: {Authorization: `Bearer ${imageKey}`, 'Content-Type': 'application/json'}, body: JSON.stringify({model: imageModel, prompt: fullPrompt, quality: imageQuality, size: imageSize, n: 1, output_format: 'jpeg', output_compression: 95}), dispatcher, signal: AbortSignal.timeout(240000)});
         }
-        const result = await response.json();
         if (!response.ok) {
+          definitelyRejected = [400, 401, 403, 404, 422, 429].includes(response.status);
           const reason = response.status === 401 ? 'The configured OpenAI key was not accepted.' : response.status === 403 ? 'The configured OpenAI account or network policy does not permit this image request.' : response.status === 429 ? 'OpenAI usage limit reached. Check the account balance and try again later.' : 'OpenAI could not generate this image. Try a different brief or check the configured image model.';
           throw new AppError(reason, 502);
         }
+        const result = await response.json();
         const image = result.data?.[0]?.b64_json;
         if (typeof image !== 'string' || !image) throw new AppError('The image service returned no image. Try again later.', 502);
         const bytes = Buffer.from(image, 'base64');
         if (!bytes.length || bytes.length > 8 * 1024 * 1024 || bytes.toString('base64') !== image) throw new AppError('The image service returned an unreadable image. Try again later.', 502);
-        const id = randomUUID();
+        const id = operation.resultId;
         const referenceImages = await Promise.all(uploads.map(upload => uploadPicture(upload.value, 'image')));
         const contextImages = [...new Set([...referenceImages, ...await Promise.all(inheritedUrls.map(url => uploadPicture(url, 'image')))])].slice(0, 4);
         let imageUrl;
@@ -338,12 +373,18 @@ export function createApp({
           instructionHistory: history, source: 'Design studio', published: false,
           createdAt: new Date().toISOString(), model: imageModel, quality: imageQuality, size: imageSize, portfolio: false,
         });
+        savedDesign = design;
+        try {await store.finishProviderOperation('owner', 'studio', operation.id, {status: 'completed', result: {designId: design.id}});} catch { /* The committed design remains recoverable by its allocated ID. */ }
         res.status(201).json(design);
       } finally { await dispatcher.close(); }
     } catch (error) {
-      if (error.name === 'TimeoutError') next(new AppError('Image generation timed out. Please try again.', 504));
+      if (res.headersSent || savedDesign) return;
+      if (claimed) {
+        try {await store.finishProviderOperation('owner', 'studio', operation.id, {status: !providerStarted || definitelyRejected ? 'failed' : 'uncertain'});} catch { /* An uncertain write is never replayed automatically. */ }
+      }
+      if (claimed && providerStarted && !definitelyRejected) next(new AppError('The design result could not be confirmed. Check this request or your gallery before starting another generation.', error.name === 'TimeoutError' ? 504 : 503));
       else if (error instanceof AppError) next(error);
-      else next(new AppError('Image service could not be reached. Check the server network configuration.', 502));
+      else next(new AppError('The studio request could not be confirmed. Check its status before sending again.', 503));
     }
   });
   const requireMediaAccess = async (req, res, next) => {

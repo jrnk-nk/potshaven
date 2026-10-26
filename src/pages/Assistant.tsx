@@ -83,6 +83,9 @@ export default function Assistant() {
   const draftRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<AbortController | null>(null);
+  // Keep the same request reference and body after an interrupted response.
+  // A manual retry can recover the original result without a second paid call.
+  const attemptRef = useRef<{identity: string; exchangeId: string; body: string} | null>(null);
   const inFlight = useRef(false);
   const saving = useRef(new Set<string>());
   const mounted = useRef(true);
@@ -100,6 +103,7 @@ export default function Assistant() {
   useEffect(() => {
     requestRef.current?.abort(); historyRequest.current?.abort(); memoryRequest.current?.abort(); scopeRef.current++;
     conversationRef.current = {id: crypto.randomUUID(), version: 0};
+    attemptRef.current = null;
     setPendingExchange(null); setMemoryNote(''); setHistoryOpen(false); setHistoryBusy(false); setHistoryError(''); setHistoryItems([]); setHistoryTotal(0); setHistoryNext(null); setChatTitle('New conversation'); setSiteId(''); setContextNote(''); setPlanOpen(false); setSwitchIntent(null);
     inFlight.current = false; setBusy(false); saving.current.clear();
     setMessages([]); setDraft(''); setError(''); setSaves({}); setBriefing(null); setBriefingError('');
@@ -178,6 +182,7 @@ export default function Assistant() {
     setSwitchIntent(null);
     if (id === 'new') {
       scopeRef.current++; conversationRef.current = {id: crypto.randomUUID(), version: 0};
+      attemptRef.current = null;
       setMessages([]); setDraft(''); setSaves({}); setError(''); setContextNote(''); setMemoryNote(''); setPendingExchange(null); setChatTitle('New conversation'); closeHistory();
       draftRef.current?.focus(); return;
     }
@@ -189,6 +194,7 @@ export default function Assistant() {
       if (!currentScope(scope) || controller.signal.aborted) return;
       if (!validConversation(result) || result.id !== id) throw new Error('This conversation could not be opened.');
       scopeRef.current++; conversationRef.current = {id: result.id, version: result.version};
+      attemptRef.current = null;
       setMessages(result.messages.map(({id, role, content}: ChatMessage) => ({id, role, content}))); setDraft(''); setSaves({}); setError(''); setContextNote(''); setMemoryNote('Saved conversation · ask for fresh suggestions before making changes'); setPendingExchange(null); setChatTitle(result.title); setSiteId(''); closeHistory();
     } catch (caught) {if (currentScope(scope) && !controller.signal.aborted) {setHistoryError(errorMessage(caught)); if (caught instanceof ApiError && caught.status === 401) void refresh();}}
     finally {if (currentScope(scope) && !controller.signal.aborted) setHistoryBusy(false);}
@@ -212,19 +218,24 @@ export default function Assistant() {
     if (!content || inFlight.current || pendingExchange || historyBusy || conversationFull || !online || !configured) return;
     const requestRole = data.role, scope = scopeRef.current;
     const conversation = {...conversationRef.current};
-    const user: ChatMessage = {id: crypto.randomUUID(), role: 'user', content};
     const requestRecords: Record<string, any[]> = Object.fromEntries([...collections].map(collection => [collection, structuredClone(dataRef.current[collection] || [])]));
     const history = messages.slice(-8).map(({role, content}) => ({role, content: content.slice(0, 2000)}));
+    const identity = JSON.stringify({requestRole, conversation, content, siteId});
+    const exchangeId = attemptRef.current?.identity === identity ? attemptRef.current.exchangeId : crypto.randomUUID();
+    const user: ChatMessage = {id: exchangeId, role: 'user', content};
+    const body = attemptRef.current?.identity === identity ? attemptRef.current.body : JSON.stringify({message: content, history, today: today(), conversation: {id: conversation.id, exchangeId, expectedVersion: conversation.version}, ...(siteId ? {siteId} : {})});
+    attemptRef.current = {identity, exchangeId, body};
     const controller = new AbortController();
     requestRef.current = controller; inFlight.current = true;
     setMessages(current => [...current, user]); setDraft(''); setError(''); setBusy(true);
     const timer = setTimeout(() => controller.abort(), 75000);
     try {
-      const response = await fetch('/api/assistant', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', Accept: 'application/json'}, body: JSON.stringify({message: content, history, today: today(), conversation: {id: conversation.id, exchangeId: user.id, expectedVersion: conversation.version}, ...(siteId ? {siteId} : {})}), signal: controller.signal});
+      const response = await fetch('/api/assistant', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', Accept: 'application/json'}, body, signal: controller.signal});
       const result = await response.json().catch(() => null);
       if (!currentScope(scope) || roleRef.current !== requestRole) return;
       if (!response.ok) {if (response.status === 401) void refresh(); throw new Error(typeof result?.error === 'string' ? result.error : 'Your assistant could not respond. Please try again.');}
       if (!result || typeof result.reply !== 'string' || !Array.isArray(result.actions)) throw new Error('Your assistant returned an incomplete response. Please try again.');
+      attemptRef.current = null;
       const id = crypto.randomUUID();
       const proposals = result.actions.filter((action: any) => action && collections.has(action.collection) && ['create', 'update'].includes(action.operation) && (action.collection !== 'purchaseRequests' || action.operation === 'create') && typeof action.label === 'string' && action.changes && typeof action.changes === 'object' && !Array.isArray(action.changes) && (FINANCIAL_FEATURES_ENABLED || !containsFinancialFields(action.changes)) && (action.operation !== 'update' || typeof action.recordId === 'string')).map((action: Action, index: number): Proposal => {
         const record = (requestRecords[action.collection] || []).find((item: any) => item.id === action.recordId);
@@ -243,7 +254,7 @@ export default function Assistant() {
     } catch (caught) {
       if (!currentScope(scope) || roleRef.current !== requestRole) return;
       setDraft(content); setMessages(current => current.filter(item => item.id !== user.id));
-      setError(controller.signal.aborted ? 'Your assistant is taking longer than expected. Your request is still here; please try again.' : errorMessage(caught));
+      setError(controller.signal.aborted ? 'Your assistant is taking longer than expected. Check Saved chats for its reply. Retrying this message keeps the original request reference.' : errorMessage(caught));
     } finally {
       clearTimeout(timer); if (currentScope(scope)) inFlight.current = false; if (requestRef.current === controller) requestRef.current = null;
       if (currentScope(scope)) {setBusy(false); requestAnimationFrame(() => draftRef.current?.focus());}

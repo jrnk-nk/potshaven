@@ -10,7 +10,7 @@ The hosted app saves company data in its connected Supabase PostgreSQL database.
 | Saved design conversations and their links to images | `potshaven_private.records` |
 | Uploaded site/plant/completion/branding photos and generated designs | Image bytes in `potshaven_private.media` |
 | Owner inbox updates and read receipts | `potshaven_private.activity` |
-| Company settings, role-private Company assistant conversations, session signing secret, sign-in limits and session revocations | `potshaven_private.metadata` |
+| Company settings, role-private Company assistant conversations, provider request receipts, session signing secret, sign-in limits, session generations and session revocations | `potshaven_private.metadata` |
 
 Vercel does not fall back to a temporary SQLite database when the configured database fails. A failed save reports an error. Local development and the separate SQLite hosting option use local database/image files instead; those files need their own backups.
 
@@ -24,7 +24,7 @@ Schema version 4 enables row-level security (RLS) on all four private tables. Th
 
 The trusted backend connects as the database/table owner and intentionally bypasses RLS. Owner and manager sessions are application roles, not Supabase Auth users. The backend therefore still checks every API and media request, filters private fields, and rejects unauthorized writes. RLS alone would not separate the app's owner and manager; it adds protection against direct database access. A stolen privileged database connection can bypass RLS, so keep `DATABASE_URL` private.
 
-A successful sign-out now records an opaque session revocation in the database before clearing the browser cookie. Reusing that signed cookie cannot reopen API records or private photos. Other devices stay signed in. Password rotation invalidates all existing sessions. Shared role passwords do not provide individual staff identity or multifactor authentication.
+A successful sign-out now records an opaque session revocation in the database before clearing the browser cookie. Reusing that signed cookie cannot reopen API records or private photos. Ordinary sign-out leaves other devices signed in. The owner can use **Settings → Account protection** and re-enter the owner password to sign out every device for either role. Durable per-role generations invalidate existing cookies across app instances, including old cookies. Password rotation still invalidates all existing sessions. Shared role passwords do not provide individual staff identity or multifactor authentication.
 
 ## Check the running workspace
 
@@ -86,3 +86,5 @@ Decryption authenticates the entire archive before publishing the plaintext file
 Have the database administrator restore that custom archive into a **new, isolated database/project**, using `pg_restore` with error-on-failure and a single transaction. Use the test database's owner for object ownership where the original owner does not exist. Do not point a restore command at the production connection, and do not expose a partially restored database to the app. Run the current backend bootstrap against the isolated restore, with new owner/manager passwords and production AI integrations disabled, so current RLS and app permissions are applied. Then follow the representative-data and role checks above, including saved assistant history. Only record the recovery drill as successful after these checks pass.
 
 Automated repository tests check encryption/decryption, tamper rejection, permissions, credential handling and failed-run cleanup with a simulated `pg_dump` executable. They do not perform a backup of the live Supabase project or establish its recovery retention. A separate isolated application restore test checks saved data and access controls without touching production.
+
+Provider request receipts preserve interrupted-request identity across deployments. Include them in recovery copies. Restoring an older snapshot can also restore older session generations and omit later request receipts: rotate role passwords after recovery and review recent work/provider activity before requesting replacements. Do not automatically replay requests after a restore.

@@ -257,3 +257,18 @@
 .dc-image-signature {padding:12px 15px;background:#fffefa;border-top:1px solid #e5eadd;}
 .dc-gallery-error {padding:12px 16px;margin:16px 0;color:#986249;background:#fbf1ea;border:1px solid #ebd9cd;border-radius:9px;font-size:13px;}
 @media(max-width:760px) {.dc-heading h1{font-size:25px;}.dc-image-signature{padding:9px 12px;}.dc-gallery-button{padding:8px 10px;gap:6px;}.dc-gallery-button>span{font-size:12px;}.dc-present-button>span{display:none;}.dc-project-title small{max-width:220px;}.dc-chosen-badge{font-size:9px;}}
+
+/* Request recovery lives in the scrollable thread so the phone composer stays usable. */
+.dc-request-recovery {max-width:790px;margin:14px auto 18px;padding:17px 18px;background:#f8f3e8;border:1px solid #e7dcc5;border-radius:12px;color:#756449;box-sizing:border-box;}
+.dc-request-recovery>strong,.dc-request-gallery>strong {display:block;font-size:13px;line-height:1.5;}
+.dc-request-recovery p,.dc-request-gallery p {font-size:12px;line-height:1.65;margin:7px 0 12px;}
+.dc-request-recovery>div {display:flex;flex-wrap:wrap;gap:8px;}
+.dc-request-recovery button,.dc-request-gallery button {display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:9px 12px;border:1px solid #d8ccb2;border-radius:8px;background:#fffefa;color:#6b5f45;font:inherit;font-size:12px;cursor:pointer;}
+.dc-request-recovery button:disabled {opacity:.55;cursor:default;}
+.dc-request-recovery>small {display:block;font-size:11px;line-height:1.6;margin-top:10px;}
+.dc-request-error {color:#995f48;}
+.dc-request-gallery {max-width:1250px;margin:0 auto 22px;padding:18px 20px;background:#f8f3e8;border:1px solid #e7dcc5;border-radius:12px;color:#756449;}
+.dc-request-gallery button {margin:0 8px 7px 0;flex-wrap:wrap;}
+.dc-request-gallery button>span {color:#83765b;}
+.dc-request-dialog-actions {display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap;margin-top:20px;}
+@media(max-width:760px){.dc-request-recovery{padding:13px 12px;margin:10px 0 14px;}.dc-request-recovery p{font-size:11px;}.dc-request-recovery button{font-size:11px;padding:8px 10px;}.dc-request-gallery{padding:15px;}.dc-request-gallery button{width:100%;margin-right:0;justify-content:space-between;text-align:left;}}

@@ -11,6 +11,66 @@ export class AppError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
 }
 
+export const PROVIDER_LIMITS = Object.freeze({
+  assistant: Object.freeze({concurrency: 2, requests: 12, windowMs: 60000, leaseMs: 90000}),
+  studio: Object.freeze({concurrency: 1, requests: 4, windowMs: 60000, leaseMs: 360000}),
+  readiness: Object.freeze({concurrency: 1, requests: 1, windowMs: 60000, leaseMs: 45000}),
+});
+export function sessionGenerationKey(role) {
+  if (!['owner', 'manager'].includes(role)) throw new AppError('Choose owner or manager.', 400);
+  return `session-generation:${role}`;
+}
+export function sessionGeneration(value = 0) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new AppError('Session access could not be verified.', 503);
+  return value;
+}
+export function providerOperationKey(role, kind, id) {
+  if (!['owner', 'manager'].includes(role)) throw new AppError('Please sign in to continue.', 401);
+  if (!Object.hasOwn(PROVIDER_LIMITS, kind) || typeof id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)) throw new AppError('Choose a valid request reference.');
+  return `provider-operation:${kind}:${role}:${id.toLowerCase()}`;
+}
+function providerTime(now) {
+  if (!Number.isSafeInteger(now) || now < 0 || now > Number.MAX_SAFE_INTEGER - 360000) throw new AppError('Invalid request time.');
+  return now;
+}
+export function providerClaimInput(input, now = Date.now()) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['role', 'kind', 'requestId', 'fingerprint', 'resourceKey'].includes(key))) throw new AppError('Choose a valid request reference.');
+  providerOperationKey(input.role, input.kind, input.requestId); providerTime(now);
+  if (typeof input.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(input.fingerprint) || input.resourceKey !== undefined && (typeof input.resourceKey !== 'string' || input.resourceKey.length > 300 || /[\u0000-\u001f\u007f]/.test(input.resourceKey))) throw new AppError('Choose a valid request fingerprint.');
+  return {id: input.requestId.toLowerCase(), role: input.role, kind: input.kind, fingerprint: input.fingerprint, resourceKey: input.resourceKey || '', status: 'pending', createdAt: now, updatedAt: now, expiresAt: now + PROVIDER_LIMITS[input.kind].leaseMs, resultId: randomUUID()};
+}
+export function providerOperationResult(value, now = Date.now()) {
+  if (!value) return null;
+  providerTime(now);
+  const {id, role, kind, fingerprint, resourceKey, status, createdAt, updatedAt, expiresAt, resultId} = value;
+  try {
+    providerOperationKey(role, kind, id); providerOperationKey(role, kind, resultId);
+    if (!/^[a-f0-9]{64}$/.test(fingerprint) || typeof resourceKey !== 'string' || !['pending', 'completed', 'uncertain', 'failed'].includes(status) || ![createdAt, updatedAt, expiresAt].every(Number.isSafeInteger) || createdAt < 0 || updatedAt < 0 || expiresAt < createdAt) throw Error();
+  } catch {throw new AppError('The saved request could not be verified.', 503);}
+  return {id, role, kind, fingerprint, resourceKey, status: status === 'pending' && expiresAt <= now ? 'uncertain' : status, createdAt, updatedAt, expiresAt, resultId, ...(value.result !== undefined ? {result: JSON.parse(JSON.stringify(value.result))} : {})};
+}
+export function providerFinishInput(input, now = Date.now()) {
+  providerTime(now);
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['status', 'result'].includes(key)) || !['completed', 'failed', 'uncertain'].includes(input.status) || input.result !== undefined && input.status !== 'completed') throw new AppError('Choose a valid request outcome.');
+  let result;
+  if (input.result !== undefined) {
+    let encoded;
+    try {encoded = JSON.stringify(input.result);} catch {throw new AppError('The request outcome could not be saved.');}
+    if (!encoded || encoded.length > 64000 || !input.result || typeof input.result !== 'object' || Array.isArray(input.result)) throw new AppError('The request outcome must be a small record.');
+    result = JSON.parse(encoded);
+  }
+  return {status: input.status, updatedAt: now, ...(result !== undefined ? {result} : {})};
+}
+export function finishProviderRecord(previous, patch, now) {
+  if (!previous) throw new AppError('Request reference not found.', 404);
+  providerOperationResult(previous, now);
+  if (['completed', 'failed'].includes(previous.status)) {
+    if (previous.status !== patch.status || !isDeepStrictEqual(previous.result, patch.result)) throw new AppError('This request already has a saved outcome.', 409);
+    return previous;
+  }
+  return {...previous, ...patch};
+}
+
 const conversationId = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
 export function assistantConversationKey(role, id) {
   if (!['owner', 'manager'].includes(role)) throw new AppError('Please sign in to open saved conversations.', 401);
@@ -201,6 +261,64 @@ export function createStore(filename = '.data/potshaven.db', { seed = true, now 
       db.prepare('DELETE FROM records WHERE collection = ? AND id = ?').run(collection, id);
     },
     settings() { const row = getMeta.get('settings'); return row ? JSON.parse(row.value) : {}; },
+    getSessionGeneration(role) {
+      const row = getMeta.get(sessionGenerationKey(role));
+      return sessionGeneration(row ? JSON.parse(row.value) : 0);
+    },
+    revokeRoleSessions(role) {
+      const key = sessionGenerationKey(role);
+      return transaction(() => {
+        const next = sessionGeneration(store.getSessionGeneration(role) + 1);
+        setMeta.run(key, JSON.stringify(next)); return next;
+      });
+    },
+    getProviderOperation(role, kind, requestId, now = Date.now()) {
+      const row = getMeta.get(providerOperationKey(role, kind, requestId));
+      return providerOperationResult(row ? JSON.parse(row.value) : null, now);
+    },
+    claimProviderOperation(input, now = Date.now()) {
+      const candidate = providerClaimInput(input, now), key = providerOperationKey(candidate.role, candidate.kind, candidate.id);
+      return transaction(() => {
+        const previous = store.getProviderOperation(candidate.role, candidate.kind, candidate.id, now);
+        if (previous) {
+          if (previous.fingerprint !== candidate.fingerprint || previous.resourceKey !== candidate.resourceKey) throw new AppError('This request reference belongs to different instructions.', 409);
+          return {claimed: false, operation: previous};
+        }
+        const limits = PROVIDER_LIMITS[candidate.kind];
+        // Count in SQL. In particular, never load older saved replies into
+        // application memory just to decide whether another request may start.
+        const counts = db.prepare(`WITH receipts AS (
+          SELECT json_extract(value, '$.status') AS status, json_extract(value, '$.role') AS role,
+            json_extract(value, '$.kind') AS kind, json_extract(value, '$.resourceKey') AS resource,
+            json_extract(value, '$.createdAt') AS created, json_extract(value, '$.expiresAt') AS expires,
+            json_type(value, '$.createdAt') AS created_type, json_type(value, '$.expiresAt') AS expires_type,
+            json_type(value, '$.resourceKey') AS resource_type
+          FROM metadata WHERE key LIKE ?
+        ) SELECT
+          coalesce(sum(CASE WHEN status IN ('pending', 'uncertain') AND expires > ? THEN 1 ELSE 0 END), 0) AS active,
+          coalesce(sum(CASE WHEN created > ? THEN 1 ELSE 0 END), 0) AS recent,
+          coalesce(sum(CASE WHEN status IN ('pending', 'uncertain') AND expires > ? AND role = ? AND resource = ? THEN 1 ELSE 0 END), 0) AS locked,
+          coalesce(sum(CASE WHEN coalesce(status IN ('pending', 'completed', 'uncertain', 'failed') AND role IN ('owner', 'manager') AND kind = ?
+            AND created_type = 'integer' AND expires_type = 'integer' AND resource_type = 'text'
+            AND created >= 0 AND expires >= created AND expires <= 9007199254740991, 0) THEN 0 ELSE 1 END), 0) AS invalid
+          FROM receipts`).get(`provider-operation:${candidate.kind}:%`, now, now - limits.windowMs, now, candidate.role, candidate.resourceKey, candidate.kind);
+        if (counts.invalid) throw new AppError('Saved request limits could not be verified.', 503);
+        if (candidate.resourceKey && counts.locked) throw new AppError('A request for this conversation is already in progress. Check its saved history shortly.', 409);
+        if (counts.active >= limits.concurrency) throw new AppError('Another request is still running. Please check it before starting another.', 429);
+        if (counts.recent >= limits.requests) throw new AppError('Please wait a moment before starting another request.', 429);
+        setMeta.run(key, JSON.stringify(candidate));
+        return {claimed: true, operation: candidate};
+      });
+    },
+    finishProviderOperation(role, kind, requestId, input, now = Date.now()) {
+      const key = providerOperationKey(role, kind, requestId), patch = providerFinishInput(input, now);
+      return transaction(() => {
+        const row = getMeta.get(key);
+        const next = finishProviderRecord(row ? JSON.parse(row.value) : null, patch, now);
+        setMeta.run(key, JSON.stringify(next));
+        return providerOperationResult(next, now);
+      });
+    },
     assistantConversations(role, {offset = 0} = {}) {
       const prefix = assistantConversationKey(role);
       assistantConversationOffset(offset);

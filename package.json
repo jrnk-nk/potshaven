@@ -9,7 +9,7 @@
     "start": "NODE_ENV=production node server/index.js",
     "test": "node --test server/*.test.js",
     "typecheck": "tsc -b",
-    "test:browser": "node tests/browser-operations.mjs && node tests/browser-inventory.mjs && node tests/browser-connection.mjs && node tests/browser-images.mjs && node tests/browser-studio.mjs && node tests/browser-auth.mjs && node tests/browser-assistant.mjs && node tests/browser-workforce.mjs && node tests/browser-manager.mjs && node tests/browser-manager-access.mjs && node tests/browser-owner-home.mjs && node tests/browser-activity.mjs && node tests/browser-data-protection.mjs && node tests/browser-security.mjs",
+    "test:browser": "node tests/browser-operations.mjs && node tests/browser-inventory.mjs && node tests/browser-connection.mjs && node tests/browser-images.mjs && node tests/browser-studio.mjs && node tests/browser-auth.mjs && node tests/browser-assistant.mjs && node tests/browser-workforce.mjs && node tests/browser-manager.mjs && node tests/browser-manager-access.mjs && node tests/browser-owner-home.mjs && node tests/browser-activity.mjs && node tests/browser-data-protection.mjs && node tests/browser-security.mjs && node tests/browser-account-security.mjs && node tests/browser-studio-recovery.mjs",
     "test:production": "node tests/production-smoke.mjs",
     "test:connection": "node tests/browser-connection.mjs",
     "test:images": "node tests/browser-images.mjs",
@@ -24,7 +24,9 @@
     "test:data-protection": "node tests/browser-data-protection.mjs",
     "test:security": "node tests/browser-security.mjs",
     "test:handoff": "node --test server/business-handoff.test.js",
-    "test:backup": "node --test server/backup-tooling.test.js"
+    "test:backup": "node --test server/backup-tooling.test.js",
+    "test:account-security": "node tests/browser-account-security.mjs",
+    "test:studio-recovery": "node tests/browser-studio-recovery.mjs"
   },
   "dependencies": {
     "@fontsource/dm-sans": "^5.3.0",

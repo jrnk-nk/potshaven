@@ -233,6 +233,13 @@ try {
   await expect(composer).toHaveValue('Help plan tomorrow');
   assert.equal(writes.length, 3);
   console.log('PASS a failed assistant request keeps the draft without repeating a request or saving changes');
+  const interruptedRequest = structuredClone(requests.at(-1));
+  response = {reply: 'The original planning reply is ready for review.', actions: []};
+  await send.click();
+  await expect(assistant.getByText(response.reply, {exact: true})).toBeVisible();
+  assert.deepEqual(requests.at(-1), interruptedRequest, 'An explicit retry keeps its original exchange ID, context and date.');
+  assert.equal(writes.length, 3);
+  console.log('PASS retrying an interrupted message retains the original request reference for safe server recovery');
 
   await page.setViewportSize({width: 390, height: 844});
   await page.reload();

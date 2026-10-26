@@ -1,6 +1,6 @@
 import {randomBytes, randomUUID} from 'node:crypto';
 import postgres from 'postgres';
-import {collections, validate, AppError, activityData, assistantConversationKey, assistantConversationOffset, assistantConversationSummary, assistantConversationResult, assistantExchangeInput, nextAssistantConversation} from './store.js';
+import {collections, validate, AppError, activityData, assistantConversationKey, assistantConversationOffset, assistantConversationSummary, assistantConversationResult, assistantExchangeInput, nextAssistantConversation, PROVIDER_LIMITS, providerOperationKey, providerClaimInput, providerOperationResult, providerFinishInput, sessionGenerationKey, sessionGeneration} from './store.js';
 import {seedData} from './seed.js';
 import {databaseTlsOptions} from './database-tls.js';
 import {repairLegacySettings} from './settings-repair.js';
@@ -184,6 +184,63 @@ END
 $function$`,
 ];
 
+const PROVIDER_FUNCTIONS = [
+`CREATE OR REPLACE FUNCTION potshaven_private.claim_provider_operation(p_key text, p_guard text, p_receipt jsonb, p_capacity integer, p_max_requests integer, p_window bigint, p_now bigint)
+RETURNS jsonb LANGUAGE plpgsql SET search_path = pg_catalog, potshaven_private AS $function$
+DECLARE previous jsonb; prefix text;
+BEGIN
+  INSERT INTO potshaven_private.metadata(key, value) VALUES (p_guard, '{}'::jsonb) ON CONFLICT DO NOTHING;
+  PERFORM 1 FROM potshaven_private.metadata WHERE key = p_guard FOR UPDATE;
+  SELECT value INTO previous FROM potshaven_private.metadata WHERE key = p_key;
+  IF FOUND THEN
+    IF previous->>'fingerprint' IS DISTINCT FROM p_receipt->>'fingerprint' OR previous->>'resourceKey' IS DISTINCT FROM p_receipt->>'resourceKey' THEN
+      RAISE EXCEPTION USING MESSAGE = 'This request reference belongs to different instructions.', ERRCODE = 'P0001', DETAIL = '409';
+    END IF;
+    RETURN jsonb_build_object('claimed', false, 'operation', previous);
+  END IF;
+  prefix := 'provider-operation:' || (p_receipt->>'kind') || ':%';
+  IF EXISTS (SELECT 1 FROM potshaven_private.metadata WHERE key LIKE prefix AND NOT coalesce(
+    jsonb_typeof(value) = 'object' AND value->>'status' IN ('pending', 'completed', 'uncertain', 'failed')
+    AND value->>'role' IN ('owner', 'manager') AND value->>'kind' = p_receipt->>'kind'
+    AND jsonb_typeof(value->'resourceKey') = 'string'
+    AND jsonb_typeof(value->'createdAt') = 'number' AND (value->>'createdAt') ~ '^[0-9]+$'
+    AND jsonb_typeof(value->'expiresAt') = 'number' AND (value->>'expiresAt') ~ '^[0-9]+$'
+    AND (value->>'expiresAt')::numeric >= (value->>'createdAt')::numeric
+    AND (value->>'expiresAt')::numeric <= 9007199254740991, false)
+  ) THEN RAISE EXCEPTION USING MESSAGE = 'Saved request limits could not be verified.', ERRCODE = 'P0001', DETAIL = '503'; END IF;
+  IF coalesce(p_receipt->>'resourceKey', '') <> '' AND EXISTS (
+    SELECT 1 FROM potshaven_private.metadata WHERE key LIKE prefix AND value->>'status' IN ('pending', 'uncertain') AND (value->>'expiresAt')::bigint > p_now
+      AND value->>'role' = p_receipt->>'role' AND value->>'resourceKey' = p_receipt->>'resourceKey'
+  ) THEN RAISE EXCEPTION USING MESSAGE = 'A request for this conversation is already in progress. Check its saved history shortly.', ERRCODE = 'P0001', DETAIL = '409'; END IF;
+  IF (SELECT count(*) FROM potshaven_private.metadata WHERE key LIKE prefix AND value->>'status' IN ('pending', 'uncertain') AND (value->>'expiresAt')::bigint > p_now) >= p_capacity THEN
+    RAISE EXCEPTION USING MESSAGE = 'Another request is still running. Please check it before starting another.', ERRCODE = 'P0001', DETAIL = '429';
+  END IF;
+  IF (SELECT count(*) FROM potshaven_private.metadata WHERE key LIKE prefix AND (value->>'createdAt')::bigint > p_now - p_window) >= p_max_requests THEN
+    RAISE EXCEPTION USING MESSAGE = 'Please wait a moment before starting another request.', ERRCODE = 'P0001', DETAIL = '429';
+  END IF;
+  INSERT INTO potshaven_private.metadata(key, value) VALUES (p_key, p_receipt);
+  RETURN jsonb_build_object('claimed', true, 'operation', p_receipt);
+END
+$function$`,
+`CREATE OR REPLACE FUNCTION potshaven_private.finish_provider_operation(p_key text, p_patch jsonb)
+RETURNS jsonb LANGUAGE plpgsql SET search_path = pg_catalog, potshaven_private AS $function$
+DECLARE previous jsonb; result jsonb;
+BEGIN
+  SELECT value INTO previous FROM potshaven_private.metadata WHERE key = p_key FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'Request reference not found.', ERRCODE = 'P0001', DETAIL = '404'; END IF;
+  IF previous->>'status' IN ('completed', 'failed') THEN
+    IF previous->>'status' IS DISTINCT FROM p_patch->>'status' OR previous->'result' IS DISTINCT FROM p_patch->'result' THEN
+      RAISE EXCEPTION USING MESSAGE = 'This request already has a saved outcome.', ERRCODE = 'P0001', DETAIL = '409';
+    END IF;
+    RETURN previous;
+  END IF;
+  result := previous || p_patch;
+  UPDATE potshaven_private.metadata SET value = result WHERE key = p_key;
+  RETURN result;
+END
+$function$`,
+];
+
 // A single transaction serializes cold-start schema setup across independent
 // serverless instances. Business mutations themselves lock only their records.
 export const POSTGRES_SCHEMA_SQL = `DO $bootstrap$
@@ -262,6 +319,7 @@ BEGIN
     END LOOP;
     INSERT INTO potshaven_private.metadata(key, value) VALUES ('schemaVersion', '"4"'::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
   END IF;
+  ${PROVIDER_FUNCTIONS.map(sql => `EXECUTE $ddl$${sql}$ddl$;`).join('\n  ')}
   -- Keep explicit EXECUTE revocations after every function creation/upgrade.
   -- The global default PUBLIC grant cannot be removed per schema.
   REVOKE ALL ON ALL FUNCTIONS IN SCHEMA potshaven_private FROM PUBLIC CASCADE;
@@ -371,6 +429,34 @@ export async function createPostgresStore(connectionString = process.env.DATABAS
     },
     async settings() {
       return (await read("SELECT value FROM potshaven_private.metadata WHERE key = 'settings'"))[0]?.value || {};
+    },
+    async getSessionGeneration(role) {
+      const row = (await read('SELECT value FROM potshaven_private.metadata WHERE key = $1', [sessionGenerationKey(role)]))[0];
+      return sessionGeneration(row ? row.value : 0);
+    },
+    async revokeRoleSessions(role) {
+      const key = sessionGenerationKey(role);
+      const row = (await run(`INSERT INTO potshaven_private.metadata(key, value) VALUES ($1, '1'::jsonb)
+        ON CONFLICT (key) DO UPDATE SET value = CASE WHEN jsonb_typeof(potshaven_private.metadata.value) = 'number'
+          AND (potshaven_private.metadata.value #>> '{}') ~ '^[0-9]+$'
+          AND (potshaven_private.metadata.value #>> '{}')::numeric < 9007199254740991
+          THEN to_jsonb((potshaven_private.metadata.value #>> '{}')::bigint + 1) ELSE NULL END RETURNING value`, [key]))[0];
+      return sessionGeneration(row.value);
+    },
+    async getProviderOperation(role, kind, requestId, now = Date.now()) {
+      const row = (await read('SELECT value FROM potshaven_private.metadata WHERE key = $1', [providerOperationKey(role, kind, requestId)]))[0];
+      return providerOperationResult(row?.value, now);
+    },
+    async claimProviderOperation(input, now = Date.now()) {
+      const candidate = providerClaimInput(input, now), key = providerOperationKey(candidate.role, candidate.kind, candidate.id), limits = PROVIDER_LIMITS[candidate.kind];
+      const row = (await run('SELECT potshaven_private.claim_provider_operation($1, $2, $3::jsonb, $4, $5, $6, $7) AS result', [key, `provider-guard:${candidate.kind}`, candidate, limits.concurrency, limits.requests, limits.windowMs, now]))[0];
+      if (typeof row?.result?.claimed !== 'boolean') throw new AppError('Request admission could not be verified.', 503);
+      return {claimed: row.result.claimed, operation: providerOperationResult(row.result.operation, now)};
+    },
+    async finishProviderOperation(role, kind, requestId, input, now = Date.now()) {
+      const key = providerOperationKey(role, kind, requestId), patch = providerFinishInput(input, now);
+      const row = (await run('SELECT potshaven_private.finish_provider_operation($1, $2::jsonb) AS result', [key, patch]))[0];
+      return providerOperationResult(row?.result, now);
     },
     async assistantConversations(role, {offset = 0} = {}) {
       const prefix = assistantConversationKey(role);

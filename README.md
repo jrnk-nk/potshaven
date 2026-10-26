@@ -43,6 +43,8 @@ npm run test:browser     # Operations, inventory, recovery, images, studio, assi
 npm run test:studio      # Photo attachments, saved chats, edits and mobile composer
 npm run test:auth        # Owner/manager sign-in, expiry and workspace-load recovery
 npm run test:assistant   # Saved conversations, site focus, reviewed changes and mobile layout
+npm run test:account-security # Owner device revocation, password checks and private UI clearing
+npm run test:studio-recovery # Interrupted design requests, recovery and duplicate prevention
 npm run test:handoff     # Real HTTP owner/manager workflow and isolated PostgreSQL restore
 npm run test:workforce   # External worker agreements, assignments, WhatsApp and persistence
 npm run test:manager     # Daily brief, operational reminders, assignments and mobile layout
@@ -62,6 +64,8 @@ Browser checks use `/usr/bin/chromium` when available; otherwise run `npx playwr
 - Supply requests and owner approvals, equipment servicing, plant care guides, crew skills/workload and transport availability.
 - Company staff and external workers with daily, weekly, fixed-term, or job-completion agreements. Save agreement dates, signed references and work instructions; job assignments flag availability and other visits on the same day. Pay fields remain unavailable while money features are disabled.
 - A Company assistant with private saved conversations for each role, site-focused planning, recent visit summaries and reviewed job, worker, vehicle, issue and supply-request proposals. Save operational changes explicitly. Its prioritized attention list checks overdue work, unchecked completion tasks, coming-week assignments, low stock, equipment servicing, pending supplies and expiring agreements without a model call. A dated work-plan preview can be copied or opened in WhatsApp; the manager chooses who receives it and sends it.
+- Owner Settings includes account-protection checks and password-confirmed sign-out of all owner or manager devices. Existing sessions remain valid until the owner explicitly uses these controls; shared-role accounts do not provide individual identity or MFA.
+- Assistant and studio requests use shared database admission across app instances. Studio request references support checking interrupted requests without starting another generation. An uncertain result is never automatically replayed.
 - Owner Settings includes an explicit assistant response check. This makes one short provider request without company records; configured keys alone are never treated as a verified reply.
 - An owner-only Manager activity inbox for saved requests, site visits, job progress/completion, assignments, stock use and other permitted manager changes. Events and their related changes commit together. The inbox shows the latest 100 updates, keeps a durable unread count, and checks every 30 seconds while visible, as well as on focus/reconnection. The shared sign-in is labelled **Manager account**; it does not identify an individual worker.
 - Client issues, branded service reports and an owner portfolio.
@@ -90,3 +94,5 @@ A [Dockerfile](Dockerfile) and [Render blueprint](render.yaml) remain available 
 Details: [API](server/API.md) · [PostgreSQL adapter](server/POSTGRES.md) · [Supabase setup](SUPABASE_SETUP.md) · [Reliability and access review](docs/RELIABILITY_REVIEW.md).
 
 The [owner/manager access rules](docs/ROLE_WORKSPACES.md) apply to the interface, API, returned records, assistant context/actions, and private images. Manager operational updates preserve hidden owner fields. Separate sign-in roles receive different workspaces; account changes discard stale private replies.
+
+GitHub **App checks** runs the build, API/storage tests, production smoke check and browser workflows on pull requests and pushes to `main`. Actions are pinned to verified commits, production dependency advisories at high severity fail the check, and weekly dependency updates arrive as proposals. Branch protection and Vercel deployment gating are separate account settings; this repository does not establish either.
